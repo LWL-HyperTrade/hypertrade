@@ -46,6 +46,13 @@ Clear next builds — not committed dates.
 | 2 | **AI portfolio awareness (multi-symbol)** | Agents manage **multiple symbols at once** with portfolio-level awareness: conviction budget across assets, correlation / shared-beta checks, opportunity cost (“best use of capital”). Replaces today’s one-symbol cap |
 | 3 | **HL advanced order types** | Support Hyperliquid **TWAP** and **Scale** (and similar) order types in the mobile trading UX + signing path |
 | 4 | **Order-related push notifications** | Push when orders fill, cancel, reject, or otherwise change state (beyond today’s price / system alerts) |
-| 5 | **HIP-4 outcome markets** | Prediction / outcome markets when we wire HL HIP-4 into the same mobile + builder-fee patterns |
-| 6 | **Web trading UI** | Browser app for the same HL flows (trade, portfolio, deposits) — complements the mobile-native app; same backend / builder fee / Privy patterns where possible |
-| 7 | **Codebase audit** | Third-party (or structured internal) security review of backend, relayers, wallet/signing paths, and optional UR / AI modules before wider production reliance |
+| 5 | **Web trading UI** | Browser app for the same HL flows (trade, portfolio, deposits) — complements the mobile-native app; same backend / builder fee / Privy patterns where possible |
+| 6 | **Codebase audit** | Third-party (or structured internal) security review of backend, relayers, wallet/signing paths, and optional UR / AI modules before wider production reliance |
+
+---
+
+## HIP-4 outcome markets — separate repo (done)
+
+HIP-4 (Hyperliquid outcome / prediction markets) is **not** coming into this app. It lives in its own reference so perps/HIP-3 and outcome markets stay isolated (regulatory + product).
+
+Builders who want outcome markets: **[LWL-OrbCast/orbcast](https://github.com/LWL-OrbCast/orbcast)** — Expo + FastAPI + Vite, Privy, Bridge2, agent signing, builder fees. Docs in that repo (`README`, `docs/HIP4.md`, `docs/SETUP.md`, `docs/HL_BUILDER.md`, …). Do not add HIP-4 UI or `outcomeMeta` routes here.

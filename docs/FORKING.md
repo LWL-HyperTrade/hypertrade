@@ -30,6 +30,8 @@ Goal: Privy login → Bridge2 deposit → trade with **your** builder fee.
 
 You do **not** need UR partner credentials or an AI worker for this path.
 
+HIP-4 outcome / prediction markets are **not** in this repo. Use **[LWL-OrbCast/orbcast](https://github.com/LWL-OrbCast/orbcast)** (own docs + setup). Do not merge HIP-4 UI into a HyperTrade fork unless you are deliberately combining products.
+
 ---
 
 ## 2. Skip / strip AI agents (Tier 2)

@@ -17,6 +17,8 @@ Read this before large edits. Prefer small, tier-aware changes.
 
 Default fork path = **Tier 1 only**. See [docs/FORKING.md](./docs/FORKING.md) and [docs/ROADMAP.md](./docs/ROADMAP.md).
 
+**HIP-4 outcome markets** are a different product: [LWL-OrbCast/orbcast](https://github.com/LWL-OrbCast/orbcast). Do not add `outcomeMeta` / outcome tickets to this tree.
+
 ---
 
 ## Read these docs first

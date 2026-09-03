@@ -77,7 +77,7 @@ Database bootstrap: **`backend/supabase_schema.sql`**, then optional migrations 
 | [HL_BUILDER.md](./docs/HL_BUILDER.md) | Builder fees, Bridge2, scaling & rate limits |
 | [COSTS.md](./docs/COSTS.md) | Expected infra / AI / banking costs by tier |
 | [ENVIRONMENT.md](./docs/ENVIRONMENT.md) | All env vars + unused/legacy list |
-| [ROADMAP.md](./docs/ROADMAP.md) | Shipped tiers (HL / banking / AI) + HIP-4 |
+| [ROADMAP.md](./docs/ROADMAP.md) | Shipped tiers (HL / banking / AI); HIP-4 is a [separate repo](https://github.com/LWL-OrbCast/orbcast) |
 | [MOBILE_RELEASE.md](./docs/MOBILE_RELEASE.md) | Play Store / App Store, D-U-N-S, compliance |
 | [SECURITY.md](./SECURITY.md) | Secrets and reporting |
 
@@ -90,7 +90,7 @@ Database bootstrap: **`backend/supabase_schema.sql`**, then optional migrations 
 | **1 — Core HL trading** | Shipped | Yes |
 | **2 — AI agents** | Shipped (`workers/ai-agent`) | No |
 | **3 — Neobank / banking** (UR.APP IBAN / card) | Shipped in reference app | No |
-| **HIP-4 outcome markets** | Planned | No |
+| **HIP-4 outcome markets** | Separate repo — [orbcast](https://github.com/LWL-OrbCast/orbcast) | No — do not add here |
 
 AI builds on HL (Tier 1). Neobank/banking is a separate partner stack (compliance + ops). Minimal forks should keep Privy + Bridge2 + builder fee only. Details: [ROADMAP.md](./docs/ROADMAP.md).
 

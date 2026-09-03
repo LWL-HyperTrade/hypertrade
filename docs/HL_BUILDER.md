@@ -389,9 +389,11 @@ Docs stay useful for deep dives ([HL API](https://hyperliquid.gitbook.io/hyperli
 
 ---
 
-## HIP-4 outcome markets (coming soon)
+## HIP-4 outcome markets (separate repo)
 
-HL HIP-4 adds **prediction / outcome markets**. HyperTrade does not ship this yet — see [Roadmap](./ROADMAP.md). Expect the same builder-fee and agent-signing patterns when added.
+HL HIP-4 is **outcome / prediction markets**. This HyperTrade reference stays perps / spot / HIP-3 — HIP-4 is isolated on purpose (regulatory + product).
+
+Builders who want outcome markets: **[LWL-OrbCast/orbcast](https://github.com/LWL-OrbCast/orbcast)** (its own setup, `docs/HIP4.md`, builder-fee / Bridge2 notes). Do not wire `outcomeMeta` or outcome tickets into this app. See [ROADMAP.md](./ROADMAP.md).
 
 ---
 
