@@ -29,7 +29,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { useRouter, type Href } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueries, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -2695,6 +2695,7 @@ export default function AiAgentsScreen() {
       staleTime: 15_000,
       refetchInterval: 30_000,
       retry: 1,
+      placeholderData: keepPreviousData,
     })),
   });
 
@@ -2715,6 +2716,21 @@ export default function AiAgentsScreen() {
     });
     return map;
   }, [dedicatedForHl, dedicatedStateQueries]);
+
+  /** Last-known positive equity so a mid-refetch $0 snapshot doesn't flash. */
+  const dedicatedBalanceByAgentId = useMemo(() => {
+    const map: Record<string, number | null> = {};
+    dedicatedForHl.forEach((agent, idx) => {
+      const q = dedicatedStateQueries[idx];
+      map[agent.id] = stickyDedicatedBalanceUsd({
+        env: tradingEnv,
+        address: agent.hlSubaccountAddress,
+        state: q?.data,
+        fetching: !!(q?.isFetching || q?.isPending || q?.isLoading),
+      });
+    });
+    return map;
+  }, [dedicatedForHl, dedicatedStateQueries, tradingEnv]);
 
   // Book often sees a new fill before /positions refetches. Hold sidelined
   // chips whenever the live symbol set drifts from the last synced key, and
@@ -2859,6 +2875,8 @@ export default function AiAgentsScreen() {
   const isDedicatedHlStatePending = useCallback(
     (agent: AiAgentView) => {
       if (agent.mode !== 'dedicated' || !agent.hlSubaccountAddress) return false;
+      const sticky = dedicatedBalanceByAgentId[agent.id];
+      if (sticky != null && Number.isFinite(sticky) && sticky > 0.01) return false;
       if (dedicatedStateByAgentId[agent.id]) return false;
       const idx = dedicatedForHl.findIndex((a) => a.id === agent.id);
       if (idx < 0) return true;
@@ -2870,7 +2888,7 @@ export default function AiAgentsScreen() {
       if (q?.isError) return false;
       return true;
     },
-    [dedicatedForHl, dedicatedStateQueries, dedicatedStateByAgentId],
+    [dedicatedForHl, dedicatedStateQueries, dedicatedStateByAgentId, dedicatedBalanceByAgentId],
   );
 
   const isAgentPerfLoading = useCallback(
@@ -4060,6 +4078,7 @@ export default function AiAgentsScreen() {
                 openSymbols: openSymbolsByAgentId[agent.id] ?? [],
                 masterState: masterTradingState,
                 dedicatedState: dedicatedStateByAgentId[agent.id],
+                dedicatedBalanceUsd: dedicatedBalanceByAgentId[agent.id] ?? null,
               },
               bookWinRateByAgentId[agent.id],
             );
@@ -4088,7 +4107,13 @@ export default function AiAgentsScreen() {
                 agent.mode === 'dedicated'
                   ? dedicatedStateByAgentId[agent.id]
                   : masterTradingState;
-              const liveOpens = countLiveOpenPositions(tracked, liveState, dbOpen);
+              const liveOpens = countAgentBookLivePositions({
+                dedicated: agent.mode === 'dedicated',
+                configuredSymbols: agent.config.symbols ?? [],
+                trackedSymbols: tracked,
+                state: liveState,
+                dbOpenCount: dbOpen,
+              });
               if (liveOpens > 0) {
                 showInfo(
                   t('aiAgents.revokeConfirmTitle', 'Revoke this agent?'),
@@ -4756,6 +4781,42 @@ export default function AiAgentsScreen() {
   );
 }
 
+/** Survives remounts — same idea as portfolio's last-known-positive total. */
+const lastKnownPositiveDedicatedBalanceByKey = new Map<string, number>();
+
+function stickyDedicatedBalanceUsd(args: {
+  env: string;
+  address: string | null | undefined;
+  state: HyperliquidTradingState | undefined;
+  fetching: boolean;
+}): number | null {
+  const addr = String(args.address ?? '').toLowerCase();
+  const raw =
+    args.state && Number.isFinite(args.state.accountValueUsd)
+      ? args.state.accountValueUsd
+      : null;
+  if (!addr.startsWith('0x')) return raw;
+
+  const key = `${args.env}:${addr}`;
+  const held = lastKnownPositiveDedicatedBalanceByKey.get(key);
+
+  if (raw != null && raw > 0.01) {
+    lastKnownPositiveDedicatedBalanceByKey.set(key, raw);
+    return raw;
+  }
+
+  if (held != null && held > 0.01) {
+    // Mid-refetch or mode-unknown empty hydrate — keep the last good number.
+    if (args.fetching || !args.state || args.state.accountAbstractionMode == null) {
+      return held;
+    }
+    lastKnownPositiveDedicatedBalanceByKey.delete(key);
+    return raw ?? 0;
+  }
+
+  return raw;
+}
+
 function liveOpenCoinSet(state: HyperliquidTradingState | undefined): Set<string> {
   const set = new Set<string>();
   for (const p of state?.positions ?? []) {
@@ -4781,20 +4842,31 @@ function unrealizedForSymbols(
   return sum;
 }
 
-/** DB may still say OPEN until the worker reconciles a manual close — prefer HL. */
-function countLiveOpenPositions(
-  trackedSymbols: string[],
-  state: HyperliquidTradingState | undefined,
-  dbOpenCount: number,
-): number {
-  if (!state) return dbOpenCount;
-  if (trackedSymbols.length === 0) return 0;
-  const live = new Set(
-    state.positions
-      .filter((p) => Math.abs(Number(p.szi)) > 0)
-      .map((p) => String(p.coin ?? '').toUpperCase()),
-  );
-  return trackedSymbols.filter((s) => live.has(s.toUpperCase())).length;
+/**
+ * Live positions on this agent's book.
+ * Dedicated: every open HL position on the sub (AI + manual).
+ * Shared: AI-tracked coins plus manual opens on the agent's assigned symbols.
+ * Prefer HL when the clearinghouse is in; otherwise the DB count.
+ */
+function countAgentBookLivePositions(args: {
+  dedicated: boolean;
+  configuredSymbols: string[];
+  trackedSymbols: string[];
+  state: HyperliquidTradingState | undefined;
+  dbOpenCount: number;
+}): number {
+  if (!args.state) return args.dbOpenCount;
+  const live = liveOpenCoinSet(args.state);
+  if (args.dedicated) return live.size;
+  const want = new Set<string>();
+  for (const s of args.trackedSymbols) want.add(s.toUpperCase());
+  for (const s of args.configuredSymbols) want.add(s.toUpperCase());
+  if (want.size === 0) return 0;
+  let n = 0;
+  for (const coin of live) {
+    if (want.has(coin)) n += 1;
+  }
+  return n;
 }
 
 function resolveAgentPerformance(
@@ -4805,6 +4877,7 @@ function resolveAgentPerformance(
     openSymbols: string[];
     masterState?: HyperliquidTradingState;
     dedicatedState?: HyperliquidTradingState;
+    dedicatedBalanceUsd?: number | null;
   },
   /** Book round-trip win rate from HL fills. `undefined` = not ready (use DB). */
   bookWinRatePct?: number | null,
@@ -4835,20 +4908,34 @@ function resolveAgentPerformance(
         ? hlPnl
         : dbPnl + unrealizedForSymbols(live.dedicatedState, live.openSymbols);
     return {
-      openPositions: countLiveOpenPositions(live.openSymbols, live.dedicatedState, dbOpen),
+      openPositions: countAgentBookLivePositions({
+        dedicated: true,
+        configuredSymbols: agent.config.symbols ?? [],
+        trackedSymbols: live.openSymbols,
+        state: live.dedicatedState,
+        dbOpenCount: dbOpen,
+      }),
       pnlUsd: bookPnl,
       volumeUsd: hlSummary?.allTimeVlm ?? dbVolume,
       winRatePct,
       balanceUsd:
-        live.dedicatedState && Number.isFinite(live.dedicatedState.accountValueUsd)
-          ? live.dedicatedState.accountValueUsd
-          : null,
+        live.dedicatedBalanceUsd !== undefined
+          ? live.dedicatedBalanceUsd
+          : live.dedicatedState && Number.isFinite(live.dedicatedState.accountValueUsd)
+            ? live.dedicatedState.accountValueUsd
+            : null,
     };
   }
 
   const unrealized = unrealizedForSymbols(live.masterState, live.openSymbols);
   return {
-    openPositions: countLiveOpenPositions(live.openSymbols, live.masterState, dbOpen),
+    openPositions: countAgentBookLivePositions({
+      dedicated: false,
+      configuredSymbols: agent.config.symbols ?? [],
+      trackedSymbols: live.openSymbols,
+      state: live.masterState,
+      dbOpenCount: dbOpen,
+    }),
     pnlUsd: dbPnl + unrealized,
     volumeUsd: dbVolume,
     winRatePct,
