@@ -808,10 +808,10 @@ def story(toc_entries: Sequence[tuple] | None = None) -> List:
     s.append(P("Max supply is <b>1,000,000,000 LWL</b> (1 billion). No additional mint is described in this document."))
     s.append(make_table([
         ["Allocation", "Share", "Tokens", "Terms"],
-        ["Public", "60%", "600,000,000", "Fair-launch float on Uniswap via pools.trade (Robinhood Chain)."],
+        ["Public", "55%", "550,000,000", "Fair-launch float on Uniswap via pools.trade (Robinhood Chain)."],
         ["Ecosystem", "20%", "200,000,000", "Locked until November 2026."],
         ["AI agents", "10%", "100,000,000", "Locked until January 2027. Not for sale — see note below."],
-        ["Team", "10%", "100,000,000", "Locked until August 2027."],
+        ["Team", "15%", "150,000,000", "Locked until August 2027."],
     ], [3.4 * cm, 2.2 * cm, 3.6 * cm, 7.2 * cm]))
     s.append(Callout("AI agents allocation: the 10% LWL reserved for AI agents is <b>not for sale</b> and can be treated as outside active circulation. A time lock is not the same as a burn — those tokens remain in existence until a future burn mechanism, if introduced, removes them.", tone="blue"))
     s.append(H2("Buybacks and burns"))
