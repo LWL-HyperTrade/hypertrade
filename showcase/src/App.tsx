@@ -8,7 +8,7 @@ import { EquityChart } from './components/EquityChart';
 import { FaqAccordion } from './components/FaqAccordion';
 import { HorizonHint } from './components/HorizonHint';
 import { Sparkline } from './components/Sparkline';
-import { ClockIcon, ExternalLinkIcon, GooglePlayIcon, MailIcon, MediumIcon } from './components/Icons';
+import { ClockIcon, ExternalLinkIcon, GitHubIcon, GooglePlayIcon, MailIcon, MediumIcon } from './components/Icons';
 import { SHOWCASE_FAQ } from './lib/faq';
 import { formatCycleCountdown, msUntilNextHourlyCycle } from './lib/hourlyCycle';
 import { symbolLogoSrc } from './lib/symbolLogos';
@@ -18,6 +18,8 @@ const PLAY =
   'https://play.google.com/store/apps/details?id=com.hypertrade.app';
 const MEDIUM =
   'https://medium.com/@hypertrade/building-ai-that-trades-with-you-a49c6b939bd0';
+const GITHUB_AI_AGENT =
+  'https://github.com/LWL-HyperTrade/hypertrade/tree/main/workers/ai-agent';
 const CONTACT = 'mailto:support@hypertrade.exchange';
 /** Align with showcase API cache (~28s) — snappier than 60s, still HL-friendly. */
 const REFRESH_MS = 30_000;
@@ -1271,6 +1273,15 @@ export default function App() {
               <span className="about-link-copy">
                 <strong>Building AI That Trades With You</strong>
                 <span>Medium</span>
+              </span>
+            </a>
+            <a className="about-link" href={GITHUB_AI_AGENT} target="_blank" rel="noreferrer">
+              <span className="about-link-icon" aria-hidden>
+                <GitHubIcon size={18} />
+              </span>
+              <span className="about-link-copy">
+                <strong>AI agent worker (open source)</strong>
+                <span>GitHub</span>
               </span>
             </a>
             <a className="about-link" href={PLAY} target="_blank" rel="noreferrer">
