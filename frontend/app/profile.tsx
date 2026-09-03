@@ -82,7 +82,7 @@ const extra =
 const WHITEPAPER_URL: string =
   process.env.EXPO_PUBLIC_WHITEPAPER_URL ||
   extra?.EXPO_PUBLIC_WHITEPAPER_URL ||
-  'https://www.hypertrade.exchange/HyperTrade_Whitepaper.pdf';
+  'https://www.hypertrade.exchange/LWL_Whitepaper.pdf';
 const RISK_DISCLOSURE_URL =
   'https://www.hypertrade.exchange/HyperTrade_Risk_Disclosure.pdf';
 

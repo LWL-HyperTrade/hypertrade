@@ -27,14 +27,14 @@ from reportlab.platypus import (
 
 
 OUT = Path(__file__).resolve().parent
-PDF_PATH = OUT / "HyperTrade_Whitepaper.pdf"
-MD_PATH = OUT / "HyperTrade_Whitepaper.md"
+PDF_PATH = OUT / "LWL_Whitepaper.pdf"
+MD_PATH = OUT / "LWL_Whitepaper.md"
 
 PAGE_W, PAGE_H = A4
 MARGIN_X = 1.75 * cm
 CONTENT_W = PAGE_W - 2 * MARGIN_X
 
-# HyperTrade brand palette (from frontend/src/theme/colors.ts).
+# House palette (HyperTrade app colors.ts; used here as LWL print style).
 NAVY = colors.HexColor("#0A0A0F")
 INK = colors.HexColor("#15151E")
 MUTED = colors.HexColor("#707080")
@@ -200,6 +200,11 @@ def ext_link(url: str, label: str | None = None) -> str:
 # Platform branding — UR.APP in prose; keep URID / UR API as technical terms from their docs.
 UR_APP = "UR.APP"
 UR_DOCS_HOME = ext_link("https://docs.ur.app/", "docs.ur.app")
+LWL_SITE = ext_link("https://www.lunaticwisdomlabs.com/", "lunaticwisdomlabs.com")
+HT_GITHUB = ext_link("https://github.com/LWL-HyperTrade/hypertrade", "LWL-HyperTrade/hypertrade")
+OC_GITHUB = ext_link("https://github.com/LWL-OrbCast/orbcast", "LWL-OrbCast/orbcast")
+HT_SITE = ext_link("https://hypertrade.exchange", "hypertrade.exchange")
+OC_SITE = ext_link("https://orbcast.xyz", "orbcast.xyz")
 
 
 def H1(text: str) -> Paragraph:
@@ -488,13 +493,13 @@ def bg(canvas, doc):
     if doc.page > 1:
         canvas.setFont("Helvetica", 8)
         canvas.setFillColor(MUTED)
-        canvas.drawString(MARGIN_X, 0.85 * cm, "HyperTrade Whitepaper")
+        canvas.drawString(MARGIN_X, 0.85 * cm, "Lunatic Wisdom Labs Whitepaper")
         canvas.drawRightString(PAGE_W - MARGIN_X, 0.85 * cm, str(doc.page))
     canvas.restoreState()
 
 
 class WhitepaperDoc(SimpleDocTemplate):
-    """Collects H1 (+ §5.1) for a compact TOC — subsection detail stays in-body only."""
+    """Collects H1 (+ §6.1) for a compact TOC — subsection detail stays in-body only."""
 
     toc_entries: List[tuple] = []
 
@@ -507,7 +512,7 @@ class WhitepaperDoc(SimpleDocTemplate):
             return
         if style_name == "H1":
             WhitepaperDoc.toc_entries.append((0, text, self.page))
-        elif style_name == "H2" and text.startswith("5.1"):
+        elif style_name == "H2" and text.startswith("6.1"):
             WhitepaperDoc.toc_entries.append((1, text, self.page))
 
 
@@ -529,21 +534,24 @@ def story(toc_entries: Sequence[tuple] | None = None) -> List:
 
     # Cover
     s.append(Spacer(1, 2.4 * cm))
-    s.append(P("HYPERTRADE WHITEPAPER", "Eyebrow"))
-    s.append(P("A Non-Custodial Interface for Global Trading and Stablecoin Finance", "CoverTitle"))
-    s.append(P("Global Finance. Open-sourced.", "Quote"))
-    s.append(P("HyperTrade is building a mobile-first interface that makes advanced onchain markets usable by everyday users while preserving self-custody, transparent execution, and user-controlled authorization.", "CoverSub"))
+    s.append(P("LUNATIC WISDOM LABS WHITEPAPER", "Eyebrow"))
+    s.append(P("Building the Future of AI &amp; Self-Custody", "CoverTitle"))
+    s.append(P("No intermediaries. No compromises.", "Quote"))
+    s.append(P("We create open-source, AI-powered onchain solutions that empower users with true ownership of their digital assets.", "CoverSub"))
     s.append(FeatureStrip([
-        ("Market", "Global"),
-        ("Custody", "Non-custodial UI"),
-        ("Rails", "USDC + IBAN"),
-        ("Trading", "Hyperliquid"),
-        ("Finance", "UR.APP"),
+        ("Studio", "Lunatic Wisdom Labs"),
+        ("Live", "HyperTrade · OrbCast"),
+        ("Custody", "User-held keys"),
+        ("Token", "LWL only"),
+        ("Source", "Open"),
     ]))
     s.append(Spacer(1, 0.5 * cm))
-    s.append(Callout("Vision: make onchain trading and stablecoin finance feel as simple as a modern fintech app, while keeping the user in control of funds and signatures."))
+    s.append(Callout("Labs thesis: ship multiple products that keep users in control of keys and signatures, publish the work as open source, and use one token — LWL — wherever product revenue supports the token."))
     s.append(Spacer(1, 0.35 * cm))
-    s.append(P(f"Draft generated {date.today().isoformat()} • Prepared for investors, partners, and early users", "Small"))
+    s.append(P(
+        f"Draft generated {date.today().isoformat()} • Lunatic Wisdom Labs LLC · Wyoming, USA · {LWL_SITE}",
+        "Small",
+    ))
     s.append(PageBreak())
 
     # Contents — dedicated page only; body always starts on the next page
@@ -555,30 +563,53 @@ def story(toc_entries: Sequence[tuple] | None = None) -> List:
 
     # §1–3 flow together on early pages (no forced breaks between them)
     s.extend(chapter("1. Vision and Goals", style="body"))
-    s.append(P("HyperTrade is designed for a global audience. The target user is not only the crypto-native trader who understands perpetual futures, RPCs, chain IDs, and gas. It is also the mobile user who wants dollar-denominated balances, intuitive market access, clear risk controls, and eventually the ability to use stablecoins for daily financial life. HyperTrade is the current main product of <b>Lunatic Wisdom Labs LLC</b>; the stack is being prepared for public open-source release so builders can fork the same rails."))
-    s.append(P("The long-term goal is to make HyperTrade a casual, easy-to-use trading and stablecoin finance interface for all levels of users: beginners who need guided education, active traders who need speed, and professionals who want mobile access to onchain markets without giving up custody."))
+    s.append(P(f"<b>Lunatic Wisdom Labs LLC</b> ({LWL_SITE}) is a Wyoming studio that publishes open-source, onchain products. Users hold their own keys. The labs does not take custody of wallet funds in order to operate an interface. AI is part of the studio brief — used where a product actually needs it — not a slogan pasted onto every app."))
+    s.append(P("The audience is global: people who want dollar-denominated balances and clear market access on a phone, and people who already know how signing, gas, and order books work. LWL ships more than one product so those needs do not have to live in a single binary or a single market type."))
     s.append(bullets([
-        "<b>For entry users:</b> remove wallet friction, explain risk, provide demo practice, and make deposits feel like a modern fintech flow.",
-        "<b>For active traders:</b> provide fast order entry, portfolio monitoring, one-tap trading setup, and direct Hyperliquid execution.",
-        "<b>For global stablecoin users:</b> evolve from trading balances into cards, payments, and bill-pay style everyday utility.",
-        "<b>For partners and investors:</b> build at the intersection of onchain execution, stablecoin adoption, mobile distribution, and AI-assisted finance.",
+        "<b>Self-custody:</b> embedded wallets, user-signed actions, no company balance sheet of user deposits.",
+        "<b>Open source:</b> each live product is published so it can be inspected, forked, and improved.",
+        "<b>AI where it fits:</b> HyperTrade includes market intelligence and optional trading agents. OrbCast v1 does not run an AI worker.",
+        "<b>One token:</b> LWL is the only LWL token. Products do not get their own tickers (see §11).",
     ]))
-    s.append(Callout("The product goal is not only to trade more assets. It is to make onchain financial infrastructure usable globally without turning the app into a custodian.", tone="blue"))
+    s.append(Callout("The studio goal is not to put every market in one app. It is to keep shipping interfaces that stay non-custodial, remain open source, and feed a single token policy when they earn revenue.", tone="blue"))
 
-    # 2
-    s.extend(chapter("2. Why Now: Global Stablecoins and Onchain Markets"))
-    s.append(P("Stablecoins have become one of crypto's clearest product-market-fit categories: dollar-like balances, global transferability, and fast settlement. At the same time, onchain market infrastructure is moving beyond crypto-only speculation into equities, commodities, FX, and index exposure."))
-    s.append(P("HyperTrade sits at the edge of this convergence. A user who starts with a USDC trading balance can later become a stablecoin payment user. A user who starts with a simple market order can later use advanced perps, portfolio tools, AI analysis, or a card product."))
-    s.append(P("This matters globally. In many markets, access to stable dollar balances, always-on markets, and cross-border payments is more useful than another zero-utility token. HyperTrade's thesis is that useful financial rails will outperform purely narrative-driven crypto applications."))
+    s.extend(chapter("2. Products"))
+    s.append(P("Two products are live. A further project is listed as in development on the labs site and is not specified in this draft. Products share a custody posture and the LWL token; they do not share one app, one order path, or one compliance stack."))
+    s.append(make_table([
+        ["Product", "What it is", "Where to look"],
+        [
+            "HyperTrade",
+            "Self-custodial mobile interface for onchain trading and optional stablecoin finance: perpetuals (including non-crypto HIP-3 books), optional UR.APP IBAN/card rails, and optional AI trading agents.",
+            f"{HT_SITE} · {HT_GITHUB}",
+        ],
+        [
+            "OrbCast",
+            "Self-custodial interface for HIP-4 outcome / prediction markets (sports and event books). Showcase is sports. No perpetual futures, HIP-3 books, banking, or AI worker in v1.",
+            f"{OC_SITE} · {OC_GITHUB}",
+        ],
+        [
+            "Further work",
+            "The labs site lists a next project as in development. This paper does not describe it.",
+            LWL_SITE,
+        ],
+    ], [3.2 * cm, 8.4 * cm, 5.0 * cm]))
+    s.append(Spacer(1, 0.2 * cm))
+    s.append(P("Technical chapters from §4 onward describe <b>HyperTrade</b> in depth (architecture, wallet, UR.APP, agents). OrbCast is in scope as a sibling product and as a revenue source for LWL — not as a second architecture dump."))
+    s.append(Callout("Shared rails today include Privy embedded wallets, user-signed gasless USDC where a product uses them, and transparent interface fees. What a given product lists, signs, or verifies is product-specific.", tone="blue"))
+
+    s.extend(chapter("3. Why Now: Global Stablecoins and Onchain Markets"))
+    s.append(P("Stablecoins have become one of crypto's clearest product-market-fit categories: dollar-like balances, global transferability, and fast settlement. At the same time, onchain market infrastructure is moving beyond crypto-only speculation into equities, commodities, FX, index exposure, and event / outcome books."))
+    s.append(P("LWL sits at that convergence with more than one product. A user who wants always-on macro and perps uses HyperTrade. A user who wants event and sports outcomes uses OrbCast. A HyperTrade user who starts with a USDC trading balance can later use portfolio tools, AI analysis, or — if they opt in — card and IBAN rails. Those paths are not copied onto OrbCast."))
+    s.append(P("This matters globally. In many markets, access to stable dollar balances, always-on markets, and event markets is more useful than another zero-utility token. The labs thesis is that useful financial interfaces will outperform purely narrative-driven crypto applications."))
     s.append(FeatureStrip([
         ("Stablecoins", "payments + savings"),
-        ("Perps", "global market access"),
-        ("Mobile", "mass distribution"),
-        ("AI", "decision support"),
+        ("Perps", "HyperTrade"),
+        ("Outcomes", "OrbCast"),
+        ("AI", "where the product uses it"),
     ]))
 
     # 3 — own page so the heading sits at the top (not orphaned from its body on the prior page)
-    s.extend(chapter("3. Product: A Trading Interface for Every Level", style="page"))
+    s.extend(chapter("4. HyperTrade: A Trading Interface for Every Level", style="page"))
     s.append(P("HyperTrade is an interface, not a traditional broker. The app helps users prepare, sign, and submit transactions while keeping funds in user-controlled wallets and routing execution to external onchain infrastructure."))
     s.append(make_table([
         ["User Need", "HyperTrade Response"],
@@ -597,8 +628,8 @@ def story(toc_entries: Sequence[tuple] | None = None) -> List:
     ]))
 
     # 4 — diagram-heavy; fresh page
-    s.extend(chapter("4. Architecture Overview", style="page"))
-    s.append(P(f"The current architecture is intentionally modular. User identity and wallet signing live in the mobile app. Backend services coordinate relays, market data, notifications, and operational state. Hyperliquid is the active execution venue. Arbitrum USDC is the stablecoin settlement rail. IBAN-backed fiat accounts and card rails are delivered through <b>{UR_APP}</b> ({UR_DOCS_HOME}) via External Wallet Access — user-signed flows with regulated fiat-token rules on Mantle (see §5.1). HyperTrade remains a non-custodial interface for wallet keys and trading; it does not hold user funds."))
+    s.extend(chapter("5. HyperTrade Architecture Overview", style="page"))
+    s.append(P(f"HyperTrade's architecture is intentionally modular. User identity and wallet signing live in the mobile app. Backend services coordinate relays, market data, notifications, and operational state. Hyperliquid is the active execution venue for this product. Arbitrum USDC is the stablecoin settlement rail. IBAN-backed fiat accounts and card rails are delivered through <b>{UR_APP}</b> ({UR_DOCS_HOME}) via External Wallet Access — user-signed flows with regulated fiat-token rules on Mantle (see §6.1). HyperTrade remains a non-custodial interface for wallet keys and trading; it does not hold user funds."))
     s.append(LayerDiagram())
     s.append(Spacer(1, 0.65 * cm))
     s.append(FlowDiagram("System flow: from user intent to execution", [
@@ -608,8 +639,8 @@ def story(toc_entries: Sequence[tuple] | None = None) -> List:
         ("Arbitrum + HL", "USDC settles on Arbitrum; trading executes on Hyperliquid."),
     ], color=BLUE))
 
-    # 5 — diagram-heavy; fresh page; §5.1 continues below without another break
-    s.extend(chapter("5. Wallet, Custody, and Gasless Infrastructure", style="page"))
+    # 6 — diagram-heavy; fresh page; §6.1 continues below without another break
+    s.extend(chapter("6. Wallet, Custody, and Gasless Infrastructure", style="page"))
     s.append(P("HyperTrade uses Privy to make wallet ownership accessible. Users can authenticate through email, Google, or Apple. The app creates an embedded Ethereum wallet for users without one, wires a Privy smart wallet for ERC-4337 account abstraction, and defensively creates a Solana wallet that remains hidden from the UI today. Arbitrum is the active EVM chain."))
     s.append(TrustDiagram())
     s.append(H2("Gasless relayer design"))
@@ -623,12 +654,12 @@ def story(toc_entries: Sequence[tuple] | None = None) -> List:
 
     # 5.1 — UR.APP integration (subsection of §5)
     s.append(Spacer(1, 0.35 * cm))
-    s.append(H2(f"5.1 {UR_APP} Integration: External Wallet Access and IBAN Accounts"))
+    s.append(H2(f"6.1 {UR_APP} Integration: External Wallet Access and IBAN Accounts"))
     s.append(P(
         f"<b>{UR_APP}</b> is the regulated banking infrastructure that powers HyperTrade's IBAN accounts, fiat-token balances, FX, pay-in/payout, and debit card rails. HyperTrade is a partner interface on top of {UR_APP}'s APIs and onchain contracts — not a custodian. Developer documentation lives at {UR_DOCS_HOME}; contract source and audit reports are in {ext_link('https://github.com/ur-app/ur-contracts', 'ur-app/ur-contracts')} (UR no longer publishes a public smart-contracts docs page)."
     ))
     s.append(H2(f"How HyperTrade integrates with {UR_APP}"))
-    s.append(P(f"{UR_APP} integrations are built from three independent choices: <b>Account Mode</b> (who holds fiat and who signs), <b>Card Mode</b> (what funds card spend), and <b>KYC Mode</b> (how identity is verified). HyperTrade enables {UR_APP} by default; the same product can also run as trading-only — Privy, Arbitrum USDC, and Hyperliquid — without {UR_APP} credentials, Mantle banking contracts, or KYC (see §5.1 custody boundary)."))
+    s.append(P(f"{UR_APP} integrations are built from three independent choices: <b>Account Mode</b> (who holds fiat and who signs), <b>Card Mode</b> (what funds card spend), and <b>KYC Mode</b> (how identity is verified). HyperTrade enables {UR_APP} by default; the same product can also run as trading-only — Privy, Arbitrum USDC, and Hyperliquid — without {UR_APP} credentials, Mantle banking contracts, or KYC (see §6.1 custody boundary)."))
     s.append(make_table([
         [f"{UR_APP} integration choice", f"What {UR_APP} offers", "What HyperTrade uses"],
         ["Account Mode", "Managed Custody (partner signs fiat) · External Wallet Access (user wallet signs)", "External Wallet Access — user signs; UR rules apply to fiat tokens"],
@@ -689,30 +720,31 @@ def story(toc_entries: Sequence[tuple] | None = None) -> List:
     ]))
     s.append(P(f"Withdraw and payout flows use {UR_APP}'s permit REST API: the user signs an EIP-2612 permit on device, and {UR_APP} submits and pays for onchain settlement — HyperTrade's relayer does not move funds the user did not authorize.", "Body"))
 
-    # 6+
-    s.extend(chapter("6. Hyperliquid Execution, Non-Crypto Perpetuals, and Outcome Markets", style="smart"))
-    s.append(P("Hyperliquid is the active execution venue for HyperTrade. The app integrates Hyperliquid info APIs, exchange APIs, WebSocket state, API-wallet order signing, builder fee approvals, and environment-scoped caches for clean separation between live and test environments."))
-    s.append(P("One of the most important market shifts is that onchain perpetual markets are expanding beyond crypto. Public reporting in early 2026 cited Hyperliquid HIP-3 markets reaching roughly $1.4B in open interest, with oil and other non-crypto markets driving significant demand. This is aligned with HyperTrade's broader thesis: users do not only want memecoins and low-utility tokens; they want access to global macro, commodities, FX, indices, and equities in one mobile interface."))
-    s.append(P("HyperTrade can tap HIP-3 providers such as XYZ Markets and other deployers as they bring more non-crypto markets onchain. This gives the app a path to diversify away from bloated crypto-only listings and toward markets users already understand: oil, gold, forex, large equities, and major indices."))
-    s.append(P("A second category worth watching is outcome trading. Hyperliquid's HIP-4 work is publicly described by ecosystem coverage as outcome or prediction-market infrastructure, live on testnet and aimed at binary/range outcomes that can resemble prediction markets or bounded options. Prediction markets such as Polymarket and Kalshi have shown strong consumer demand for event-based trading; if HIP-4 matures on mainnet, HyperTrade can extend the same mobile interface principles to outcomes without rebuilding the underlying market infrastructure."))
-    s.append(P("For HyperTrade, this matters strategically: perpetuals, non-crypto HIP-3 markets, and future outcome markets all point in the same direction — onchain markets are becoming a general interface for trading views about the world, not only crypto token prices."))
-    s.append(FlowDiagram("Hyperliquid trading setup", [
+    # 7+
+    s.extend(chapter("7. Markets and Execution", style="smart"))
+    s.append(P("HyperTrade's live trading path uses Hyperliquid: info APIs, exchange APIs, WebSocket state, API-wallet order signing, builder fee approvals, and environment-scoped caches for live vs test."))
+    s.append(P("Onchain perpetual markets are expanding beyond crypto. Public reporting in early 2026 cited Hyperliquid HIP-3 markets reaching roughly $1.4B in open interest, with oil and other non-crypto markets driving significant demand. HyperTrade can list HIP-3 providers such as XYZ Markets and other deployers as they bring more of those books onchain — oil, gold, forex, large equities, and major indices — rather than only crypto-native tickers."))
+    s.append(P(f"Outcome / prediction markets are a separate LWL product. <b>OrbCast</b> ({OC_SITE}, {OC_GITHUB}) is the HIP-4 interface: binary and multi-outcome books, sports as the showcase, self-custody, and no perps, HIP-3, banking, or AI worker in v1. HIP-4 is not a HyperTrade roadmap item and is not folded into the HyperTrade tab."))
+    s.append(P("Perpetuals, non-crypto HIP-3 books, and outcome books all point at the same user demand: trading views about the world, not only crypto token prices. LWL meets that demand with more than one product."))
+    s.append(FlowDiagram("HyperTrade trading setup", [
         ("Fund", "User moves USDC into trading balance."),
         ("Approve", "User approves API wallet and builder fee cap."),
         ("Sign", "API wallet signs fast order flow."),
-        ("Execute", "Hyperliquid validates margin, fees, and market rules."),
+        ("Execute", "The venue validates margin, fees, and market rules."),
     ], color=GREEN))
 
-    # 7–11 — revenue through risk; tokenomics at §10; regulatory sits just before appendix
-    s.extend(chapter("7. Revenue Model and Sustainable Growth", style="smart"))
-    s.append(P(f"HyperTrade is designed around a lightweight, scalable revenue model. The product does not need to operate a matching engine, custodian, market maker balance sheet, or exchange back office to begin monetizing. Instead, it sits as a high-quality interface layer on top of mature external infrastructure: Privy for wallet onboarding, Arbitrum for USDC rails, {UR_APP} for IBAN accounts, Supabase for operational state, Railway for backend deployment, and Hyperliquid for execution."))
-    s.append(P("The current revenue model is the Hyperliquid builder model. Users approve a transparent builder fee cap during one-tap setup, and orders can include HyperTrade's builder code. This lets the app monetize usage while keeping execution on Hyperliquid and custody with the user. A stated share of that builder revenue is used to buy back <b>LWL</b>, the Lunatic Wisdom Labs token (see §10). The key alignment is simple: revenue grows with real trading activity and product adoption, not with custody, hidden spreads, or user deposits sitting on a company balance sheet."))
+    # 8–13 — revenue through risk; tokenomics at §11; regulatory sits just before appendix
+    s.extend(chapter("8. Revenue Model and Sustainable Growth", style="smart"))
+    s.append(P(f"LWL products are designed as interface layers. They do not need to operate a matching engine, custodian, market maker balance sheet, or exchange back office to begin monetizing. HyperTrade sits on Privy, Arbitrum USDC, optional {UR_APP} IBAN rails, Supabase, Railway, and Hyperliquid execution. OrbCast uses the same class of wallet and interface-fee model on HIP-4 books."))
+    s.append(P("Where a product takes a transparent builder or interface fee, users approve a fee cap and orders can include that product's builder code. Revenue is usage-based. <b>Any</b> realized LWL product revenue — HyperTrade, OrbCast, and future revenue-generating projects — can fund LWL buybacks and burns. The share applied is dynamic and never below 70% (see §11). Alignment is simple: revenue grows with real product use, not with custody or hidden spreads."))
     s.append(make_table([
-        ["Revenue Stream", "Status", "Why It Scales"],
-        ["Hyperliquid builder fees", "Active infrastructure", "Usage-based revenue from order flow through the interface, with user-approved fee caps."],
-        ["Cards and payments", "Roadmap", f"Potential partner revenue from card activity, IBAN top-ups, FX/spend programs, or negotiated revenue share with {UR_APP}."],
-        ["AI-assisted agents", "Active infrastructure", "House LLM + market-data pipeline on the worker; monetization aligned with builder fees on agent-originated flow."],
-    ], [4.4 * cm, 4.0 * cm, 8.0 * cm]))
+        ["Revenue Stream", "Product", "Why It Scales"],
+        ["Builder / interface fees", "HyperTrade (active)", "Usage-based order flow through the interface, with user-approved fee caps."],
+        ["Builder / interface fees", "OrbCast", "Same fee class on HIP-4 outcome flow as that product earns it."],
+        ["Cards and payments", "HyperTrade (roadmap)", f"Possible partner revenue from card activity, IBAN top-ups, FX/spend, or negotiated share with {UR_APP}."],
+        ["AI-assisted agents", "HyperTrade (active)", "House LLM + market-data pipeline; monetization aligned with fees on agent-originated flow."],
+        ["Future products", "LWL", "Any later revenue-generating LWL project uses the same single-token buyback and burn policy."],
+    ], [4.2 * cm, 4.2 * cm, 8.0 * cm]))
     s.append(H2("Cost structure"))
     s.append(bullets([
         "<b>Low fixed cost:</b> Railway, Supabase, Privy, RPC providers, notifications, analytics, and standard monitoring are manageable compared with operating exchange or custody infrastructure.",
@@ -723,8 +755,8 @@ def story(toc_entries: Sequence[tuple] | None = None) -> List:
     s.append(Callout("Business model principle: monetize the interface layer transparently while keeping custody, settlement, and market execution in specialized infrastructure.", tone="blue"))
 
     # 8
-    s.extend(chapter("8. AI Agents and Market Intelligence", style="smart"))
-    s.append(P("HyperTrade combines two AI surfaces: <b>in-app market analysis</b> (Gemini-backed research for human traders) and <b>AI Trading Agents</b> — autonomous agents that monitor Hyperliquid perps, reason over structured market context, and place orders through HL named-agent keys the user explicitly approves."))
+    s.extend(chapter("9. AI Agents and Market Intelligence", style="smart"))
+    s.append(P("AI is a HyperTrade surface, not an OrbCast v1 feature. HyperTrade combines <b>in-app market analysis</b> (Gemini-backed research for human traders) and <b>AI Trading Agents</b> — autonomous agents that monitor Hyperliquid perps, reason over structured market context, and place orders through HL named-agent keys the user explicitly approves."))
     s.append(P("The agent stack is split into a <b>control plane</b> and an <b>execution plane</b>. The mobile app and FastAPI backend handle agent CRUD, Privy JWT auth, wallet-ownership checks, and the approve-agent ceremony. A dedicated <b>ai-agent-worker</b> service (Node/TypeScript on Railway) runs the trading brain and HL order flow — it holds no public HTTP surface and talks to Supabase with the service role only."))
     s.append(FlowDiagram("AI agent runtime (hourly cycle)", [
         ("Ingest", "Per-symbol market cache: futures OHLC, OI, funding, flows, ETF demand, macro calendar, HL mids."),
@@ -757,22 +789,22 @@ def story(toc_entries: Sequence[tuple] | None = None) -> List:
     s.append(Callout("Product principle: AI agents automate research and execution within explicit user-approved bounds — named HL agent keys, not custodial trading accounts.", tone="blue"))
 
     # 9
-    s.extend(chapter("9. Community Rewards and Roadmap", style="smart"))
-    s.append(P("HyperTrade rewards active users through a loyalty tier system. Higher tiers unlock trading fee discounts tied to real usage — trading activity, referrals, and product engagement — so incentives stay aligned with authentic participation rather than passive farming."))
+    s.extend(chapter("10. Community Rewards and Roadmap", style="smart"))
+    s.append(P("HyperTrade rewards active users through a loyalty tier system. Higher tiers unlock trading fee discounts tied to real usage — trading activity, referrals, and product engagement — so incentives stay aligned with authentic participation rather than passive farming. OrbCast has its own rewards surface; the two programs are not the same ledger."))
     s.append(H2("Roadmap themes"))
     s.append(bullets([
-        "Improve the core Hyperliquid trading interface for both casual and advanced users.",
-        f"Expand stablecoin utility through {UR_APP} IBAN accounts, Fiat Only card partnerships, and everyday finance use cases.",
-        "Monitor Hyperliquid HIP-4 outcome markets as a potential future surface for prediction-market style user demand.",
-        "Operate AI Trading Agents (Shared and Dedicated) with worker-side brain, global market cache, and HL named-agent signing.",
-        "Maintain non-custodial architecture as the product expands.",
+        "<b>LWL:</b> keep publishing open-source products, keep a single token, and apply the buyback and burn policy in §11 to any product revenue.",
+        "<b>HyperTrade:</b> improve the core trading interface for casual and advanced users.",
+        f"<b>HyperTrade:</b> expand optional stablecoin utility through {UR_APP} IBAN accounts, Fiat Only card partnerships, and everyday finance use cases.",
+        "<b>HyperTrade:</b> operate AI Trading Agents (Shared and Dedicated) with worker-side brain, global market cache, and named-agent signing.",
+        "<b>OrbCast:</b> grow the HIP-4 outcome catalog and sports/event UX. No perps, banking, or AI worker in v1.",
+        "Maintain non-custodial architecture as each product expands.",
         "Deepen loyalty-tier fee discounts as usage and product surface area grow.",
-        "Operate LWL tokenomics as described in §10 — fair-launch public float, locked allocations, and product-linked buybacks.",
     ]))
 
     # 10
-    s.extend(chapter("10. LWL Tokenomics", style="smart"))
-    s.append(P("<b>LWL</b> is the token of <b>Lunatic Wisdom Labs LLC</b>. HyperTrade is the first product on that stack; later products — for example Polymarket-style sports prediction markets — are expected to use LWL as well. LWL launched via a <b>fair launch</b> on Uniswap through <b>pools.trade</b> on Robinhood Chain."))
+    s.extend(chapter("11. LWL Tokenomics", style="smart"))
+    s.append(P(f"<b>LWL</b> is the token of <b>Lunatic Wisdom Labs LLC</b>. It is the <b>only</b> LWL token. HyperTrade, OrbCast, and any later LWL product do not get their own tickers. LWL launched via a <b>fair launch</b> on Uniswap through <b>pools.trade</b> on Robinhood Chain."))
     s.append(P("Max supply is <b>1,000,000,000 LWL</b> (1 billion). No additional mint is described in this document."))
     s.append(make_table([
         ["Allocation", "Share", "Tokens", "Terms"],
@@ -782,25 +814,28 @@ def story(toc_entries: Sequence[tuple] | None = None) -> List:
         ["Team", "10%", "100,000,000", "Locked until August 2027."],
     ], [3.4 * cm, 2.2 * cm, 3.6 * cm, 7.2 * cm]))
     s.append(Callout("AI agents allocation: the 10% LWL reserved for AI agents is <b>not for sale</b> and can be treated as outside active circulation. A time lock is not the same as a burn — those tokens remain in existence until a future burn mechanism, if introduced, removes them.", tone="blue"))
-    s.append(H2("Buybacks"))
-    s.append(P("Product activity is designed to support LWL through on-market buybacks rather than selling reserved allocations:"))
+    s.append(H2("Buybacks and burns"))
+    s.append(P("Product activity supports LWL through on-market <b>buybacks and burns</b>, not by selling reserved allocations. The policy applies to <b>any</b> realized LWL revenue: HyperTrade, OrbCast, and future revenue-generating projects."))
     s.append(bullets([
-        "<b>100% of pools.trade creator fees</b> from the LWL fair-launch pool are used to buy back LWL.",
-        "<b>70% of Hyperliquid builder revenue</b> generated through HyperTrade is used to buy back LWL. The builder fee itself is dynamic and depends on app activity; the 70% share applies to that realized builder revenue.",
+        "<b>Single token:</b> only LWL. The labs will not issue a separate token per product.",
+        "<b>Source:</b> realized product revenue (interface / builder fees and any later LWL revenue lines), plus 100% of pools.trade creator fees from the LWL fair-launch pool.",
+        "<b>Share:</b> the portion of realized revenue used for buybacks and/or burns is <b>dynamic</b> and depends on market conditions. It is <b>never less than 70%</b>.",
+        "<b>Form:</b> the split between buyback and burn inside that share can move with conditions; both are in scope.",
     ]))
-    s.append(H2("Possible future burns"))
-    s.append(P("A future mechanism may require burning LWL in connection with AI-agent trading activity. That path is not live in this draft. If introduced, it would be additive to the buyback policy above and is the intended way the 10% AI-agents allocation could leave the supply — not through open-market sales."))
+    s.append(H2("Reserved AI-agents allocation"))
+    s.append(P("A future mechanism may still retire the locked 10% AI-agents allocation through a burn rather than a sale. That path is not live in this draft. If introduced, it would be additive to the revenue-funded buyback and burn policy above — not a second token."))
     s.append(H2("On-chain references"))
     s.append(P("Locks and the token itself are on Robinhood Chain. Readers can verify supply and lock state on the explorer rather than taking the table on trust:"))
     s.append(bullets([
         f"<b>LWL token:</b> {ext_link('https://robinhoodchain.blockscout.com/token/0x7bb3E171EC502F65C08D38a61D51B9841524A72D', '0x7bb3E171EC502F65C08D38a61D51B9841524A72D')}",
         f"<b>Lock contract:</b> {ext_link('https://robinhoodchain.blockscout.com/address/0x20f0137CD23411bc165BE14eA0a4F8D59E59C505', '0x20f0137CD23411bc165BE14eA0a4F8D59E59C505')}",
     ]))
-    s.append(P("LWL is not required to use HyperTrade, hold a wallet, or trade on Hyperliquid. This section describes token supply, locks, and fee-linked buybacks only. It is not an offer, solicitation, or investment advice.", "Small"))
+    s.append(P("LWL is not required to use HyperTrade, OrbCast, hold a wallet, or trade. This section describes token supply, locks, and revenue-linked buybacks and burns only. It is not an offer, solicitation, or investment advice.", "Small"))
 
     # 11
-    s.extend(chapter("11. Risk, Security, and Trust Model", style="smart"))
-    s.append(P("HyperTrade's security model is narrow by design. User wallets sign. Relayers relay. Hyperliquid executes. Supabase coordinates operational state. This separation reduces the blast radius of any one component and keeps wallet-key custody with users for the trading stack; optional UR.APP fiat-token flows add a regulated compliance layer governed by UR.APP (§5.1)."))
+    s.extend(chapter("12. Risk, Security, and Trust Model", style="smart"))
+    s.append(P("Each LWL product is a user interface, not a custodian. The table below is HyperTrade-weighted because that is where banking, 7702 relays, and AI agents live. OrbCast inherits the wallet, relayer, and interface-fee rows that apply to it; it does not inherit UR.APP, Sumsub, 7702 banking, or AI-agent key rows."))
+    s.append(P("HyperTrade's security model is narrow by design. User wallets sign. Relayers relay. The trading venue executes. Supabase coordinates operational state. This separation reduces the blast radius of any one component and keeps wallet-key custody with users for the trading stack; optional UR.APP fiat-token flows add a regulated compliance layer governed by UR.APP (§6.1)."))
     s.append(make_table([
         ["Risk", "Current Control"],
         ["User key custody", "Privy device-side embedded wallet model; backend never stores user private keys."],
@@ -817,14 +852,20 @@ def story(toc_entries: Sequence[tuple] | None = None) -> List:
     ], [4.6 * cm, 11.8 * cm]))
 
     # 12 — regulatory context immediately before appendix
-    s.extend(chapter("12. Regulatory and Policy Landscape", style="smart"))
-    s.append(P("HyperTrade should be understood as a user interface and wallet-connected application, not as a custodian. This distinction is increasingly important as regulators clarify how self-custodial trading interfaces fit within existing frameworks."))
+    s.extend(chapter("13. Regulatory and Policy Landscape", style="smart"))
+    s.append(P("LWL products should be understood as user interfaces and wallet-connected applications, not as custodians. Market type still differs by product: HyperTrade is a perpetuals and optional-banking interface; OrbCast is an outcome-markets interface. Those are different legal and store surfaces. This distinction is increasingly important as regulators clarify how self-custodial trading interfaces fit within existing frameworks."))
     s.append(P("In April 2026, SEC Division of Trading and Markets staff issued a statement on broker-dealer registration for certain user interfaces used to prepare crypto asset securities transactions. The statement is not a Commission rule and has no independent legal force, but it is directionally important: it describes conditions under which staff would not object to certain covered user interface providers operating without broker-dealer registration, including self-custodial wallet contexts, objective parameters, educational material, disclosures, and no custody of user funds."))
-    s.append(P("HyperTrade's design philosophy is consistent with several principles highlighted in that staff statement: users control wallets, the app prepares transaction parameters, fees and limitations should be disclosed, and the interface should avoid discretionary control over user funds or execution decisions. This is not legal advice, and product rollout must continue to be reviewed jurisdiction by jurisdiction."))
-    s.append(P("Separately, the Hyperliquid Policy Center launched in February 2026 as an independent research and advocacy organization focused on decentralized market infrastructure, perpetual derivatives, and practical regulatory frameworks. Its existence is a positive ecosystem development for interfaces like HyperTrade because policy clarity around decentralized markets can reduce uncertainty for builders, partners, and users."))
+    s.append(P("LWL product design is consistent with several principles highlighted in that staff statement: users control wallets, the app prepares transaction parameters, fees and limitations should be disclosed, and the interface should avoid discretionary control over user funds or execution decisions. This is not legal advice, and product rollout must continue to be reviewed jurisdiction by jurisdiction."))
+    s.append(P("Separately, the Hyperliquid Policy Center launched in February 2026 as an independent research and advocacy organization focused on decentralized market infrastructure, perpetual derivatives, and practical regulatory frameworks. Policy clarity around decentralized markets can reduce uncertainty for builders, partners, and users of interfaces in that ecosystem."))
 
     # Appendix — continue on same page when prior section leaves room
-    s.extend(chapter("13. Appendix: Factual Anchors, Audits, and Sources", style="gap"))
+    s.extend(chapter("14. Appendix: Factual Anchors, Audits, and Sources", style="gap"))
+    s.append(H2("Lunatic Wisdom Labs"))
+    s.append(bullets([
+        f"<b>Labs:</b> {LWL_SITE} — Lunatic Wisdom Labs LLC, Wyoming, USA.",
+        f"<b>HyperTrade:</b> {HT_SITE} · {HT_GITHUB}",
+        f"<b>OrbCast:</b> {OC_SITE} · {OC_GITHUB}",
+    ]))
     s.append(H2("Regulatory and ecosystem references"))
     s.append(bullets([
         "SEC Division of Trading and Markets staff statement, April 13 2026: covered user interfaces, self-custodial wallet contexts, objective parameters, disclosures, and no custody of user funds. The statement is staff view only and not a Commission rule.",
@@ -858,40 +899,43 @@ def story(toc_entries: Sequence[tuple] | None = None) -> List:
         f"Sumsub KYC via mobile SDK with verification outcomes only — no document storage on HyperTrade servers.",
         "Small",
     ))
+    s.append(P(
+        "<b>OrbCast codebase anchors:</b> Privy embedded EOA; HIP-4 trader client (venue-generic); "
+        "EIP-2612 permit relays for USDC deposits; builder-fee setup; sports chrome is fixtures/score only — not venue odds. "
+        "No perps, HIP-3, UR.APP banking, or AI worker in v1.",
+        "Small",
+    ))
     s.append(P("This document is not legal, investment, tax, or trading advice. Product roadmap items are forward-looking and subject to provider, regulatory, technical, and market constraints.", "Small"))
     return s
 
 
 def markdown() -> str:
-    return """# HyperTrade Whitepaper
+    return """# Lunatic Wisdom Labs Whitepaper
 
-This is the editable companion source for `HyperTrade_Whitepaper.pdf`.
+This is the editable companion source for `LWL_Whitepaper.pdf`.
 
 ## Core thesis
 
-HyperTrade is a global, non-custodial mobile interface for onchain trading and stablecoin finance. The goal is to make advanced markets and everyday stablecoin utility accessible to both entry-level and professional users without turning the application into a custodian.
+Lunatic Wisdom Labs LLC publishes open-source, onchain products that keep users in control of their keys. Live products are HyperTrade (trading + optional finance + optional AI agents) and OrbCast (HIP-4 outcome markets). One token: LWL. Buybacks and burns are funded from any LWL product revenue, at a dynamic share that is never less than 70%.
 
 ## Key themes
 
-- Global-first product vision
-- Trading interface for casual and advanced users
+- Labs vision: AI & self-custody, open source, no intermediaries
+- Product portfolio: HyperTrade, OrbCast; further work listed as in development
+- HyperTrade: casual and advanced trading interface (technical depth from §4)
+- OrbCast: HIP-4 outcomes / sports showcase; no perps, banking, or AI worker in v1
 - Privy wallet onboarding and ERC-4337 smart-wallet path
 - Arbitrum USDC and gasless permit relayers
-- UR.APP integration (optional): External Wallet Access, Fiat Only cards, Sumsub SDK KYC
-- Custody boundary: wallet USDC / Hyperliquid = non-custodial UI; USD24/EUR24 = UR.APP-regulated fiat tokens with compliance controls
-- URID identity, IBAN accounts, fiat tokens (USD24/EUR24) credited to user EOA on Mantle under UR.APP rules
-- EIP-7702 + Ambire gasless relay for Add Money and FX Convert
-- EIP-2612 permit flows for withdraw/payout and Hyperliquid deposits
-- Hyperliquid execution and HIP-3 non-crypto markets
-- HIP-4 outcome / prediction-market roadmap opportunity
-- SEC covered-user-interface regulatory context
-- Hyperliquid Policy Center ecosystem context
-- IBAN accounts / Fiat Only cards via UR.APP (§5.1); SEC regulatory context (§12)
-- Sumsub KYC integration: SDK on device, API token orchestration, no doc storage on HyperTrade servers
-- UR.APP docs + audit references: docs.ur.app, integration guide, ur-contracts (GitHub), Ambire 7702, LayerZero, Arbitrum USDC, Hyperliquid, Privy
-- AI Trading Agents: FastAPI control plane + Railway ai-agent-worker; Shared and Dedicated modes, per-symbol market cache, global context cache, multi-LLM brain, HL named-agent execution
-- Loyalty tiers unlocking trading fee discounts for active usage
-- LWL tokenomics (§10): 1B max supply, fair launch on Uniswap via pools.trade (Robinhood Chain), locked allocations, product-linked buybacks
+- UR.APP integration (HyperTrade, optional): External Wallet Access, Fiat Only cards, Sumsub SDK KYC
+- Custody boundary: wallet USDC / trading = non-custodial UI; USD24/EUR24 = UR.APP-regulated fiat tokens
+- HIP-3 non-crypto books on HyperTrade; HIP-4 is OrbCast, not a HyperTrade tab
+- SEC covered-user-interface regulatory context (§13)
+- AI Trading Agents are HyperTrade-only
+- LWL tokenomics (§11): 1B max supply, fair launch, locks unchanged, single token, ≥70% dynamic buyback/burn from any product revenue
+
+Labs: https://www.lunaticwisdomlabs.com/
+HyperTrade: https://github.com/LWL-HyperTrade/hypertrade
+OrbCast: https://github.com/LWL-OrbCast/orbcast
 
 The final PDF is generated by `generate_whitepaper_v2.py`.
 """
@@ -905,8 +949,8 @@ def main():
         rightMargin=MARGIN_X,
         topMargin=1.55 * cm,
         bottomMargin=1.65 * cm,
-        title="HyperTrade Whitepaper",
-        author="HyperTrade",
+        title="Lunatic Wisdom Labs Whitepaper",
+        author="Lunatic Wisdom Labs LLC",
     )
     # Multi-pass until TOC page numbers stabilize (pass 2+ renders the full TOC block).
     toc_entries: List[tuple] | None = None

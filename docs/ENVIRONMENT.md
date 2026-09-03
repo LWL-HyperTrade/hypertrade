@@ -145,7 +145,8 @@ Injected at build time (`EXPO_PUBLIC_*`). Prefer `.env` / EAS secrets over commi
 | `EXPO_PUBLIC_HL_BUILDER_FEE_TENTHS_BPS` | Client fee ceiling / default (tenths bps). API may lower via rewards discount |
 | `EXPO_PUBLIC_HIP3_ENABLED_DEXES` | Comma-separated HIP-3 dexes for WS/REST/openOrders (`xyz,io`). Unset → `xyz,io`. Must stay aligned with backend `HIP3_ENABLED_DEXES`. |
 | `EXPO_PUBLIC_ENABLE_BANKING` | Tier-3 UI gate. Default **off**. With `BANK_KYC_PAUSED` / `BANK_SERVICE_PAUSED` in `bankKycPause.ts`: Stage 0 off / 1 SOON / 2 KYC live / 3 maintenance PAUSED — see [FORKING.md](./FORKING.md) §3 |
-| `EXPO_PUBLIC_APPSFLYER_DEV_KEY`, `EXPO_PUBLIC_WHITEPAPER_URL` | Optional |
+| `EXPO_PUBLIC_APPSFLYER_DEV_KEY` | Optional |
+| `EXPO_PUBLIC_WHITEPAPER_URL` | Profile whitepaper link. Production: `https://www.hypertrade.exchange/LWL_Whitepaper.pdf` (app fallback matches this if unset) |
 
 **Firebase:** gitignored `GoogleService-Info.plist` / `google-services.json` — copy from `*.example`.
 
