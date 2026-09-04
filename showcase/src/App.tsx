@@ -17,7 +17,7 @@ import './styles.css';
 const PLAY =
   'https://play.google.com/store/apps/details?id=com.hypertrade.app';
 const MEDIUM =
-  'https://medium.com/@hypertrade/building-ai-that-trades-with-you-a49c6b939bd0';
+  'https://medium.com/@lunaticwisdomlabs/building-ai-that-trades-with-you-a49c6b939bd0';
 const GITHUB_AI_AGENT =
   'https://github.com/LWL-HyperTrade/hypertrade/tree/main/workers/ai-agent';
 const CONTACT = 'mailto:support@hypertrade.exchange';
