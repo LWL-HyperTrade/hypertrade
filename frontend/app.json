@@ -2,7 +2,7 @@
   "expo": {
     "name": "HyperTrade",
     "slug": "hyper-rwa",
-    "version": "2.3.3",
+    "version": "2.3.4",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "hypertrade",
