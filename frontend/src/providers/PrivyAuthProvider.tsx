@@ -10,6 +10,7 @@ import {
   type LinkedAccount
 } from '@privy-io/expo';
 import { useSmartWallets } from '@privy-io/expo/smart-wallets';
+import { useQueryClient } from '@tanstack/react-query';
 import * as Linking from 'expo-linking';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AuthContext, User, AuthContextType, OAuthProviderName, PRIVY_APP_ID, PRIVY_CLIENT_ID, UR_TEST_WALLET_IMPORT_ENABLED, isUrTestPrivyUser } from './AuthContext';
@@ -32,6 +33,12 @@ import {
   registerPushTokenWithBackend,
   unregisterPushToken,
   getNotificationDeviceId,
+  getNotificationPreferences,
+  readCachedPushEnabled,
+  writeCachedPushEnabled,
+  readPushEnabledFlag,
+  setSessionPushToken,
+  getSessionPushToken,
 } from '../lib/notifications';
 import { Analytics } from '../lib/analytics';
 import {
@@ -122,6 +129,7 @@ export function PrivyAuthProvider({ children }: { children: ReactNode }) {
   const setAuthenticated = useAppStore((s) => s.setAuthenticated);
   const setGuest = useAppStore((s) => s.setGuest);
   const resetAppSession = useAppStore((s) => s.logout);
+  const queryClient = useQueryClient();
   
   const [isLoading, setIsLoading] = useState(false);
   const [pendingEmail, setPendingEmail] = useState<string | null>(null);
@@ -476,15 +484,41 @@ export function PrivyAuthProvider({ children }: { children: ReactNode }) {
       // Delay to ensure auth + wallet are fully ready
       const timer = setTimeout(async () => {
         try {
+          const accessToken = await privyGetAccessToken();
+          const userId = privyUser?.id ?? null;
+          const cachedEnabled = userId ? await readCachedPushEnabled(userId) : null;
+          let serverEnabled: boolean | null = null;
+          if (accessToken) {
+            try {
+              const prefs = await getNotificationPreferences(accessToken);
+              serverEnabled = readPushEnabledFlag(prefs);
+              if (userId && cachedEnabled === null && serverEnabled !== null) {
+                await writeCachedPushEnabled(userId, serverEnabled);
+              }
+            } catch {
+              serverEnabled = null;
+            }
+          }
+          const cachedNow = userId ? await readCachedPushEnabled(userId) : null;
+          const enabled = cachedNow ?? serverEnabled;
+          if (enabled === false) {
+            if (__DEV__) console.log('[Privy] Push skipped — notifications off');
+            return;
+          }
+          if (enabled !== true) {
+            if (__DEV__) console.log('[Privy] Push skipped — preference unknown');
+            return;
+          }
           const pushToken = await registerForPushNotifications();
           if (pushToken) {
             pushTokenRef.current = pushToken;
-            const accessToken = await privyGetAccessToken();
-            if (accessToken) {
+            setSessionPushToken(pushToken);
+            const token = accessToken ?? (await privyGetAccessToken());
+            if (token) {
               const deviceId = await getNotificationDeviceId();
               await registerPushTokenWithBackend(
                 pushToken,
-                accessToken,
+                token,
                 deviceId ?? undefined,
                 walletAddress ?? undefined,
               );
@@ -900,19 +934,22 @@ export function PrivyAuthProvider({ children }: { children: ReactNode }) {
       await clearTradingSetupState();
       await disconnectExternalWallet().catch(() => { /* ignore */ });
       resetAppSession();
+      queryClient.removeQueries({ queryKey: ['notification-preferences'] });
 
-      // Unregister push token on logout
-      if (pushTokenRef.current) {
+      // Unregister this device token on logout (opt-out cache stays per user).
+      const tokenToDrop = getSessionPushToken() ?? pushTokenRef.current;
+      if (tokenToDrop) {
         try {
           const accessToken = await privyGetAccessToken();
           if (accessToken) {
-            await unregisterPushToken(pushTokenRef.current, accessToken);
+            await unregisterPushToken(tokenToDrop, accessToken);
           }
-          pushTokenRef.current = null;
         } catch (e) {
           console.log('[Privy] Failed to unregister push token:', e);
         }
       }
+      pushTokenRef.current = null;
+      setSessionPushToken(null);
       
       await privyLogout();
       setPendingEmail(null);
@@ -931,7 +968,7 @@ export function PrivyAuthProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoading(false);
     }
-  }, [walletAddress, user?.id, resetAppSession, privyLogout, privyGetAccessToken]);
+  }, [walletAddress, user?.id, resetAppSession, privyLogout, privyGetAccessToken, queryClient]);
 
   // Get access token for authenticated API calls
   const getAccessToken = useCallback(async (): Promise<string | null> => {

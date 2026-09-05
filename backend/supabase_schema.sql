@@ -150,6 +150,7 @@ CREATE INDEX IF NOT EXISTS idx_alert_history_user_id ON alert_history(user_id);
 
 CREATE TABLE IF NOT EXISTS user_notification_preferences (
     user_id TEXT PRIMARY KEY,
+    push_enabled BOOLEAN NOT NULL DEFAULT TRUE,   -- master Expo push (Profile toggle)
     system_alerts_enabled BOOLEAN DEFAULT TRUE,   -- BTC / GOLD major-move alerts
     ur_transaction_alerts_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     ur_card_alerts_enabled BOOLEAN NOT NULL DEFAULT TRUE,
@@ -158,6 +159,8 @@ CREATE TABLE IF NOT EXISTS user_notification_preferences (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 -- Migration for existing deployments (CREATE TABLE IF NOT EXISTS won't add them):
+ALTER TABLE user_notification_preferences
+  ADD COLUMN IF NOT EXISTS push_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE user_notification_preferences
   ADD COLUMN IF NOT EXISTS ur_transaction_alerts_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE user_notification_preferences

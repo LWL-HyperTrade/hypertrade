@@ -198,6 +198,8 @@ const CUSTOM_MARKET_ORDER: Record<'all' | 'stocks' | 'crypto' | 'commodities' | 
     'VIRTUAL',
     'VVV',
     'MEGA',
+    'PONS',
+    'ASTER',
   ],
   // 'GOLDSPOT', // XAUT spot — re-enable when book deepens (see hiddenMarkets.ts)
   commodities: ['GOLD', 'SILVER', 'PLATINUM', 'PALLADIUM', 'COPPER', 'OIL', 'BRENTOIL', 'NATGAS', 'URNM'],

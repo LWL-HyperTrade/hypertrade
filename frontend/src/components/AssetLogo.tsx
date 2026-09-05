@@ -118,6 +118,8 @@ const ASSET_IMAGES: Record<string, any> = {
   PUMP: require('../../assets/images/symbols/pump-icon.webp'),
   MEGA: require('../../assets/images/symbols/mega-icon.webp'),
   VIRTUAL: require('../../assets/images/symbols/virtual-icon.webp'),
+  PONS: require('../../assets/images/symbols/pons-icon.webp'),
+  ASTER: require('../../assets/images/symbols/aster-icon.webp'),
   // USDH: require('../../assets/images/symbols/usdh-icon.webp'),
   USDT: require('../../assets/images/symbols/usdt-icon.webp'),
   // GOLDSPOT: require('../../assets/images/symbols/gold.webp'), // XAUT spot — re-enable with hiddenMarkets + whitelist
@@ -198,6 +200,8 @@ const ASSET_LOGOS: Record<string, {
   PUMP: { type: 'icon', icon: 'logo-bitcoin', iconSet: 'ionicons', bgColor: '#F7931A', textColor: '#fff' },
   MEGA: { type: 'icon', icon: 'logo-bitcoin', iconSet: 'ionicons', bgColor: '#F7931A', textColor: '#fff' },
   VIRTUAL: { type: 'icon', icon: 'logo-bitcoin', iconSet: 'ionicons', bgColor: '#F7931A', textColor: '#fff' },
+  PONS: { type: 'icon', icon: 'logo-bitcoin', iconSet: 'ionicons', bgColor: '#F7931A', textColor: '#fff' },
+  ASTER: { type: 'icon', icon: 'logo-bitcoin', iconSet: 'ionicons', bgColor: '#F7931A', textColor: '#fff' },
   SUI: { type: 'icon', icon: 'logo-bitcoin', iconSet: 'ionicons', bgColor: '#F7931A', textColor: '#fff' },
   JUP: { type: 'icon', icon: 'logo-bitcoin', iconSet: 'ionicons', bgColor: '#F7931A', textColor: '#fff' },
   JTO: { type: 'icon', icon: 'logo-bitcoin', iconSet: 'ionicons', bgColor: '#F7931A', textColor: '#fff' },

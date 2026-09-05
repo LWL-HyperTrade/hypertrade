@@ -18,7 +18,7 @@ backend/supabase_schema.sql
 
 Covers: relayer locks, worker leadership, rewards/referrals, push + price alerts, Bridge2 deposit scan, demo funding, onboarding, market-data caches, RPCs used by the FastAPI backend.
 
-Existing projects that already ran this file: apply `backend/migrations/rewards_volume_sync_watermarks.sql` (Dedicated-sub volume cursors on `user_rewards`).
+Existing projects that already ran this file: apply `backend/migrations/rewards_volume_sync_watermarks.sql` (Dedicated-sub volume cursors on `user_rewards`) and `backend/migrations/user_notification_preferences_push_enabled.sql` (Profile master push toggle).
 
 ### 2. AI agents (optional — Tier 2)
 
@@ -79,7 +79,7 @@ In-app update banner (`android` / `ios` rows). Seeds disabled placeholders — r
 | `pending_trade_syncs` | Async HL volume sync queue |
 | `push_tokens` | Expo push tokens (Privy `user_id`) |
 | `price_alerts` / `alert_history` | User price alerts |
-| `user_notification_preferences` | System-alert opt-in |
+| `user_notification_preferences` | Master push (`push_enabled`) + system-alert / UR category opt-in |
 | `system_alerts_log` / `system_alert_price_snapshots` | BTC/GOLD style blast alerts |
 | `transfer_rate_limits` | Transfer abuse limits |
 | `deposit_scan_cursor` / `deposit_notifications_log` | Bridge2 deposit scanner |

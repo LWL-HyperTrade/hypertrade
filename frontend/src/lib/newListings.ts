@@ -8,6 +8,7 @@ import type { Asset } from './api';
 export const NEWLY_LISTED_SYMBOLS: readonly string[] = [
   'ANTH',
   'SPCX',
+  'PONS',
   'UNITREE',
   'CXMT',
   'SKHY',

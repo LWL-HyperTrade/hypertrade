@@ -68,6 +68,17 @@ import { useAppStore, type TradingEnv } from '../src/store/appStore';
 import { buildWhatsAppSupportUrl } from '../src/lib/support';
 import { pushRouteOnce } from '../src/lib/pushRouteOnce';
 import { useHyperliquidAccountStream } from '../src/lib/useHyperliquidAccountStream';
+import { getBuildCommitShort, getBuildCommitUrl } from '../src/lib/buildCommit';
+import {
+  getNotificationPreferences,
+  updateNotificationPreferences,
+  registerForPushNotifications,
+  registerPushTokenWithBackend,
+  writeCachedPushEnabled,
+  readCachedPushEnabled,
+  readPushEnabledFlag,
+  setSessionPushToken,
+} from '../src/lib/notifications';
 
 type Hex = `0x${string}`;
 
@@ -393,6 +404,117 @@ export default function ProfileScreen() {
 
   const publicClient = useMemo(() => createPublicClient({ chain: arbitrum, transport: http() }), []);
   const queryClient = useQueryClient();
+
+  const prefsUserId = user?.id ?? null;
+  const [cachedPushEnabled, setCachedPushEnabled] = useState<boolean | null>(null);
+  useEffect(() => {
+    let alive = true;
+    if (!prefsUserId) {
+      setCachedPushEnabled(null);
+      return;
+    }
+    void readCachedPushEnabled(prefsUserId).then((v) => {
+      if (alive) setCachedPushEnabled(v);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [prefsUserId]);
+  const { data: notificationPrefs } = useQuery({
+    queryKey: ['notification-preferences', prefsUserId],
+    queryFn: async () => {
+      const token = await getAccessToken();
+      if (!token) throw new Error('no token');
+      const prefs = await getNotificationPreferences(token);
+      const cached = prefsUserId ? await readCachedPushEnabled(prefsUserId) : null;
+      const serverFlag = readPushEnabledFlag(prefs);
+      const enabled = cached ?? serverFlag ?? true;
+      if (prefsUserId && cached === null && serverFlag !== null) {
+        await writeCachedPushEnabled(prefsUserId, serverFlag);
+      }
+      return { ...prefs, push_enabled: enabled };
+    },
+    enabled: isAuthenticated && !!prefsUserId,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const pushEnabled =
+    readPushEnabledFlag(notificationPrefs) ?? cachedPushEnabled ?? true;
+  const [pushToggleBusy, setPushToggleBusy] = useState(false);
+  const pushToggleBusyRef = useRef(false);
+  const pushToggleGenRef = useRef(0);
+
+  const handleNotificationsToggle = useCallback(
+    async (enabled: boolean) => {
+      if (pushToggleBusyRef.current) return;
+      pushToggleBusyRef.current = true;
+      const gen = ++pushToggleGenRef.current;
+      setPushToggleBusy(true);
+
+      const prefsKey = ['notification-preferences', prefsUserId] as const;
+      queryClient.setQueryData(prefsKey, (cur: typeof notificationPrefs) =>
+        cur ? { ...cur, push_enabled: enabled } : { push_enabled: enabled, system_alerts_enabled: true },
+      );
+
+      try {
+        const token = await getAccessToken();
+        if (!token) throw new Error('Not authenticated');
+        if (enabled) {
+          const pushToken = await registerForPushNotifications();
+          if (!pushToken) {
+            queryClient.setQueryData(prefsKey, (cur: typeof notificationPrefs) =>
+              cur ? { ...cur, push_enabled: false } : { push_enabled: false, system_alerts_enabled: true },
+            );
+            showToast(
+              t('priceAlerts.notificationsDisabled'),
+              t('priceAlerts.enableNotificationsInSettings'),
+              'info',
+            );
+            return;
+          }
+          const saved = await updateNotificationPreferences(token, { push_enabled: true });
+          queryClient.setQueryData(prefsKey, {
+            ...(saved ?? notificationPrefs),
+            push_enabled: true,
+          });
+          if (prefsUserId) {
+            await writeCachedPushEnabled(prefsUserId, true);
+            setCachedPushEnabled(true);
+          }
+          await registerPushTokenWithBackend(pushToken, token, undefined, walletAddress ?? undefined);
+          setSessionPushToken(pushToken);
+          showSuccessToast(t('profile.notificationsOn'));
+        } else {
+          const saved = await updateNotificationPreferences(token, { push_enabled: false });
+          queryClient.setQueryData(prefsKey, {
+            ...(saved ?? notificationPrefs),
+            push_enabled: false,
+          });
+          if (prefsUserId) {
+            await writeCachedPushEnabled(prefsUserId, false);
+            setCachedPushEnabled(false);
+          }
+          setSessionPushToken(null);
+          showSuccessToast(t('profile.notificationsOff'));
+        }
+      } catch {
+        if (gen !== pushToggleGenRef.current) return;
+        queryClient.setQueryData(prefsKey, (cur: typeof notificationPrefs) =>
+          cur ? { ...cur, push_enabled: !enabled } : { push_enabled: !enabled, system_alerts_enabled: true },
+        );
+        showErrorToast(t('profile.notificationsEnableFailed'));
+      } finally {
+        if (gen === pushToggleGenRef.current) {
+          pushToggleBusyRef.current = false;
+          setPushToggleBusy(false);
+        }
+      }
+    },
+    [getAccessToken, notificationPrefs, prefsUserId, queryClient, t, walletAddress],
+  );
+
+  const buildCommitShort = getBuildCommitShort();
+  const buildCommitUrl = getBuildCommitUrl();
 
   // Refresh Main HL trade balance on focus. Do NOT pin/clear the active trading
   // book — that retargets the shared WS on every Home↔Profile hop and can blank
@@ -1207,6 +1329,44 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           </View>
 
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => {
+              if (!pushToggleBusy && isAuthenticated) {
+                void handleNotificationsToggle(!pushEnabled);
+              }
+            }}
+            activeOpacity={0.7}
+            disabled={pushToggleBusy || !isAuthenticated}
+          >
+            <View style={[styles.menuItemLeft, { flex: 1, minWidth: 0 }]}>
+              <View
+                style={[
+                  styles.menuIcon,
+                  {
+                    backgroundColor: pushEnabled
+                      ? `${colors.accent.gold}30`
+                      : `${colors.accent.gold}20`,
+                  },
+                ]}
+              >
+                <Ionicons name="notifications" size={18} color={colors.accent.gold} />
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.menuItemText} numberOfLines={1}>
+                  {pushEnabled ? t('profile.notificationsOn') : t('profile.notifications')}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.menuItemRightIcon}>
+              {pushEnabled ? (
+                <Ionicons name="checkmark-circle" size={22} color={colors.accent.gold} />
+              ) : (
+                <Ionicons name="toggle-outline" size={24} color={colors.text.tertiary} />
+              )}
+            </View>
+          </TouchableOpacity>
+
         </View>
 
         {/* About Section */}
@@ -1320,6 +1480,21 @@ export default function ProfileScreen() {
         )} */}
 
         <Text style={styles.version}>HyperTrade v{Constants.expoConfig?.version ?? '1.0.0'}</Text>
+        {buildCommitShort && buildCommitUrl ? (
+          <TouchableOpacity
+            style={styles.commitRow}
+            onPress={() => {
+              void Linking.openURL(buildCommitUrl);
+            }}
+            accessibilityRole="link"
+            accessibilityLabel={t('profile.verifiedCommit', { sha: buildCommitShort })}
+          >
+            <Ionicons name="shield-checkmark" size={13} color={colors.text.tertiary} />
+            <Text style={styles.commitLink}>
+              {t('profile.verifiedCommit', { sha: buildCommitShort })}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
         <Text style={styles.powered}>{t('profile.copyright')}</Text>
         
         <View style={styles.socialLinks}>
@@ -1978,6 +2153,18 @@ const styles = StyleSheet.create({
   },
   
   version: { textAlign: 'center', fontSize: 13, color: colors.text.tertiary, marginTop: 4 },
+  commitRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    marginTop: 6,
+  },
+  commitLink: {
+    fontSize: 12,
+    color: colors.text.tertiary,
+    textDecorationLine: 'underline',
+  },
   powered: { textAlign: 'center', fontSize: 12, color: colors.text.muted, marginTop: 4, marginBottom: 16 },
   socialLinks: {
     flexDirection: 'row',

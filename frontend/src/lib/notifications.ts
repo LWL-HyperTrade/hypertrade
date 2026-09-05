@@ -26,7 +26,45 @@ Notifications.setNotificationHandler({
 });
 
 const EXPO_PUSH_TOKEN_CACHE_KEY = 'hypertrade_expo_push_token_cache';
+const PUSH_ENABLED_CACHE_PREFIX = 'hypertrade_push_enabled_v1:';
 const PUSH_TOKEN_RETRY_DELAYS_MS = [0, 1000, 2500];
+
+/** In-memory Expo token for this session (Profile toggle + logout cleanup). */
+let sessionPushToken: string | null = null;
+
+export function setSessionPushToken(token: string | null): void {
+  sessionPushToken = token;
+}
+
+export function getSessionPushToken(): string | null {
+  return sessionPushToken;
+}
+
+export async function readCachedPushEnabled(userId: string): Promise<boolean | null> {
+  try {
+    const raw = await AsyncStorage.getItem(PUSH_ENABLED_CACHE_PREFIX + userId);
+    if (raw === '1') return true;
+    if (raw === '0') return false;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function writeCachedPushEnabled(userId: string, enabled: boolean): Promise<void> {
+  try {
+    await AsyncStorage.setItem(PUSH_ENABLED_CACHE_PREFIX + userId, enabled ? '1' : '0');
+  } catch {
+    // ignore
+  }
+}
+
+/** Explicit boolean only — missing/undefined must not be treated as "on". */
+export function readPushEnabledFlag(
+  prefs: Pick<NotificationPreferences, 'push_enabled'> | null | undefined,
+): boolean | null {
+  return typeof prefs?.push_enabled === 'boolean' ? prefs.push_enabled : null;
+}
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -84,6 +122,8 @@ export interface UpdateAlertParams {
 
 export interface NotificationPreferences {
   user_id: string;
+  /** Master Expo push (Profile toggle). Default on. */
+  push_enabled?: boolean;
   system_alerts_enabled: boolean;
   /** UR banking push categories. These gate the push only — the in-app inbox
    * row is always recorded regardless. Default on. */
@@ -483,14 +523,7 @@ export async function getNotificationPreferences(
     return data.preferences;
   } catch (error) {
     console.error('[Notifications] Failed to fetch preferences:', error);
-    // Return default preferences on error
-    return {
-      user_id: '',
-      system_alerts_enabled: true,
-      ur_transaction_alerts_enabled: true,
-      ur_card_alerts_enabled: true,
-      ur_kyc_alerts_enabled: true,
-    };
+    throw error;
   }
 }
 
@@ -500,6 +533,7 @@ export async function getNotificationPreferences(
 export async function updateNotificationPreferences(
   accessToken: string,
   preferences: {
+    push_enabled?: boolean;
     system_alerts_enabled?: boolean;
     ur_transaction_alerts_enabled?: boolean;
     ur_card_alerts_enabled?: boolean;
@@ -521,7 +555,11 @@ export async function updateNotificationPreferences(
     }
 
     const data = await response.json();
-    return data.preferences;
+    const prefs = (data.preferences ?? {}) as NotificationPreferences;
+    if (typeof preferences.push_enabled === 'boolean') {
+      prefs.push_enabled = preferences.push_enabled;
+    }
+    return prefs;
   } catch (error) {
     console.error('[Notifications] Failed to update preferences:', error);
     throw error;

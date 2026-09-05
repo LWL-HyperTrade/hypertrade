@@ -36,6 +36,8 @@ import {
   registerPushTokenWithBackend,
   getNotificationPreferences,
   updateNotificationPreferences,
+  writeCachedPushEnabled,
+  setSessionPushToken,
 } from '../src/lib/notifications';
 import { useWebSocket } from '../src/providers/WebSocketProvider';
 import { pickPrice } from '../src/lib/priceKeys';
@@ -69,7 +71,7 @@ export default function PriceAlertsScreen() {
     }
   }, [coinParam]);
   const shouldOpenCreate = createParam === '1' || createParam === 'true';
-  const { isAuthenticated, getAccessToken, walletAddress } = useAuth();
+  const { isAuthenticated, getAccessToken, walletAddress, user } = useAuth();
   const queryClient = useQueryClient();
   const { prices } = useWebSocket();
   const insets = useSafeAreaInsets();
@@ -261,7 +263,7 @@ export default function PriceAlertsScreen() {
 
   // Fetch notification preferences
   const { data: preferences, refetch: refetchPreferences } = useQuery({
-    queryKey: ['notification-preferences'],
+    queryKey: ['notification-preferences', user?.id ?? 'anon'],
     queryFn: async () => {
       const token = await getAccessToken();
       if (!token) return { system_alerts_enabled: true };
@@ -430,13 +432,17 @@ export default function PriceAlertsScreen() {
     if (token) {
       const accessToken = await getAccessToken();
       if (accessToken) {
+        await updateNotificationPreferences(accessToken, { push_enabled: true });
+        if (user?.id) await writeCachedPushEnabled(user.id, true);
         await registerPushTokenWithBackend(token, accessToken, undefined, walletAddress ?? undefined);
+        setSessionPushToken(token);
+        queryClient.invalidateQueries({ queryKey: ['notification-preferences'] });
       }
       setNotificationsEnabled(true);
     } else {
       showToast(t('priceAlerts.notificationsDisabled'), t('priceAlerts.enableNotificationsInSettings'), 'info');
     }
-  }, [getAccessToken, walletAddress]);
+  }, [getAccessToken, walletAddress, queryClient, user?.id]);
 
   // Render alert item
   const renderAlertItem = useCallback(({ item }: { item: PriceAlert }) => {

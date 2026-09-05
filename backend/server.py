@@ -279,6 +279,8 @@ COINGECKO_SYMBOL_MAP = {
     "VVV": "venice-token",
     "PUMP": "pump-fun",
     "MEGA": "megaeth",
+    "PONS": "pons",
+    "ASTER": "aster-2",
     "EIGEN": "eigenlayer",
     "STRK": "starknet",
     "ZK": "zksync",
@@ -1329,6 +1331,8 @@ CRYPTO_METADATA = {
     "VIRTUAL": {"name": "Virtual", "symbol": "VIRTUAL", "category": "crypto"},
     "VVV": {"name": "Venice AI", "symbol": "VVV", "category": "crypto"},
     "MEGA": {"name": "MegaETH", "symbol": "MEGA", "category": "crypto"},
+    "PONS": {"name": "Pons", "symbol": "PONS", "category": "crypto"},
+    "ASTER": {"name": "Aster", "symbol": "ASTER", "category": "crypto"},
     "USDT": {"name": "USDT", "symbol": "USDT", "category": "crypto", "isSpotOnly": True},
 }
 
@@ -6000,7 +6004,9 @@ async def register_push_token(
             upsert_data, on_conflict="user_id,push_token"
         ).execute())
         
-        # Create preferences row only when missing — never overwrite opt-out on re-register.
+        # Seed prefs only when missing. Never flip push_enabled here —
+        # login / token refresh must not undo a Profile opt-out. The
+        # Profile toggle PATCHes push_enabled before it registers a token.
         try:
             existing_prefs = await asyncio.to_thread(
                 lambda: supabase.table("user_notification_preferences")
@@ -6014,6 +6020,7 @@ async def register_push_token(
                     lambda: supabase.table("user_notification_preferences")
                     .insert({
                         "user_id": auth_user.user_id,
+                        "push_enabled": True,
                         "system_alerts_enabled": True,
                     })
                     .execute()
@@ -6349,6 +6356,7 @@ async def get_notification_preferences(
         return {
             "preferences": {
                 "user_id": auth_user.user_id,
+                "push_enabled": True,  # Master Expo push (Profile toggle)
                 "system_alerts_enabled": True,  # Default enabled
                 # UR banking push categories (inbox rows are always written;
                 # these gate the PUSH only). Default on.
@@ -6364,6 +6372,7 @@ async def get_notification_preferences(
 
 
 class UpdateNotificationPreferencesRequest(BaseModel):
+    push_enabled: Optional[bool] = None
     system_alerts_enabled: Optional[bool] = None
     ur_transaction_alerts_enabled: Optional[bool] = None
     ur_card_alerts_enabled: Optional[bool] = None
@@ -6384,6 +6393,8 @@ async def update_notification_preferences(
     try:
         # Build update dict
         update_data = {"user_id": auth_user.user_id}
+        if req.push_enabled is not None:
+            update_data["push_enabled"] = req.push_enabled
         if req.system_alerts_enabled is not None:
             update_data["system_alerts_enabled"] = req.system_alerts_enabled
         if req.ur_transaction_alerts_enabled is not None:
@@ -6398,6 +6409,18 @@ async def update_notification_preferences(
             update_data,
             on_conflict="user_id"
         ).execute())
+
+        # Master off → drop every device token so leftover devices go quiet.
+        if req.push_enabled is False:
+            try:
+                await asyncio.to_thread(
+                    lambda: supabase.table("push_tokens")
+                    .delete()
+                    .eq("user_id", auth_user.user_id)
+                    .execute()
+                )
+            except Exception as wipe_err:
+                logger.warning(f"Failed to clear push tokens after opt-out: {wipe_err}")
         
         if result.data:
             return {"success": True, "preferences": result.data[0]}
@@ -7382,6 +7405,20 @@ async def _check_and_trigger_alerts():
                 if not push_tokens:
                     logger.warning(f"Alert {alert['id']}: No push tokens found for user, skipping notification")
                     continue
+
+                try:
+                    pref_row = await asyncio.to_thread(
+                        lambda: supabase.table("user_notification_preferences")
+                        .select("push_enabled")
+                        .eq("user_id", alert["user_id"])
+                        .limit(1)
+                        .execute()
+                    )
+                    if pref_row.data and pref_row.data[0].get("push_enabled") is False:
+                        logger.info(f"Alert {alert['id']}: user muted master push, skipping")
+                        continue
+                except Exception as pref_err:
+                    logger.warning(f"Alert {alert['id']}: push pref check failed: {pref_err}")
                 
                 # Format notification
                 symbol = alert["symbol"]
@@ -7562,15 +7599,18 @@ async def _check_and_send_system_alerts():
                     "user_id, push_token"
                 ).execute())
                 
-                # Filter out users who have explicitly disabled system alerts
+                # Filter out users who muted system alerts or the master push switch
                 if tokens_result.data:
                     disabled_users = await asyncio.to_thread(lambda: supabase.table("user_notification_preferences").select(
-                        "user_id"
-                    ).eq(
-                        "system_alerts_enabled", False
+                        "user_id, system_alerts_enabled, push_enabled"
                     ).execute())
                     
-                    disabled_user_ids = set(u["user_id"] for u in (disabled_users.data or []))
+                    disabled_user_ids = set(
+                        u["user_id"]
+                        for u in (disabled_users.data or [])
+                        if u.get("system_alerts_enabled") is False
+                        or u.get("push_enabled") is False
+                    )
                     tokens_result.data = [
                         t for t in tokens_result.data 
                         if t["user_id"] not in disabled_user_ids
@@ -14742,11 +14782,13 @@ async def _ur_push_pref_enabled(ur_id: int, pref_column: str) -> bool:
     try:
         res = await asyncio.to_thread(
             lambda: supabase.table("user_notification_preferences")
-            .select(pref_column).eq("user_id", uid).limit(1).execute()
+            .select(f"{pref_column},push_enabled").eq("user_id", uid).limit(1).execute()
         )
         rows = res.data or []
         if not rows:
             return True  # no prefs row yet → defaults on
+        if rows[0].get("push_enabled") is False:
+            return False
         val = rows[0].get(pref_column)
         return True if val is None else bool(val)
     except Exception:

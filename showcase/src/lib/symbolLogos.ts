@@ -96,6 +96,8 @@ const SYMBOL_LOGOS: Record<string, string> = {
   VVV: '/symbols/vvv-icon.webp',
   MEGA: '/symbols/mega-icon.webp',
   VIRTUAL: '/symbols/virtual-icon.webp',
+  PONS: '/symbols/pons-icon.webp',
+  ASTER: '/symbols/aster-icon.webp',
   USDT: '/symbols/usdt-icon.webp',
 };
 
