@@ -36,6 +36,8 @@ const HYPERDASH_BY_AGENT_ID: Record<string, string> = {
     'https://hyperdash.com/address/0xcbb222d6eca1abe22362d148ecf06a1f7b209f18',
   'f2501883-89ef-499b-8ea1-b6b56dd6f024':
     'https://hyperdash.com/address/0x8ea6a20ee4bd9a36da4eb5df981357b65db28c99',
+  '03eab1e4-187e-4026-8a73-772aac296b3c':
+    'https://hyperdash.com/address/0xdc2724db51987a86a7ce800ae54acfa1aa5338fb',
 };
 
 /** API equity is always `$1000 + dollar PnL`. Percents / chart labels use this map. */
