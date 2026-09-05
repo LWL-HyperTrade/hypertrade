@@ -358,6 +358,8 @@
     "decisionSkippedUserConflict": "تُرك — كنت تتداول هذه العملة",
     "decisionSkippedPeer": "تخطّي — وكيل آخر لديك يملك هذه العملة",
     "decisionSkippedBudget": "تخطّي — الميزانية مستخدمة بالكامل",
+    "decisionSkippedThinBook": "تخطّي — دفتر أوامر رقيق",
+    "decisionSkippedThinBookBody": "دفتر الأوامر ما كان يقدر يستوعب الطلب بهدوء، فالوكيل انتظر بدل ما يدفع انزلاق السعر",
     "decisionSkippedStopped": "متوقف",
     "decisionSkippedStoppedBody": "تم إيقاف الوكيل",
     "decisionSkippedPaused": "متوقف مؤقتاً",

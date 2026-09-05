@@ -29,13 +29,25 @@ import { HlCycleCache } from './cycleCache.js';
 import { HL_WEIGHT, HlWeightBucket } from './rateLimit.js';
 import {
   isIocNoMatch,
+  resolveBookSlippage,
   resolveCloseSlippage,
   resolveOpenSlippage,
   widenSlippage,
 } from './slippage.js';
+import { parseL2Book, type BookSnapshot, type TakeSide } from './bookSnapshot.js';
+import { liquidityTier } from './liquidityTier.js';
 import { resolveLiveOwnership, type HlFillLite } from './positionIdentity.js';
 
 type Hex = `0x${string}`;
+
+/** Book age tolerated for PROMPT context (minutes are fine for an hourly brain). */
+export const BOOK_PROMPT_MAX_AGE_MS = 5 * 60_000;
+/** Book age tolerated when computing an order price / gate (seconds). */
+export const BOOK_EXEC_MAX_AGE_MS = 10_000;
+/** HL minimum order notional — a maker remainder below this is left unfilled. */
+const HL_MIN_ORDER_NOTIONAL_USD = 10;
+/** Poll cadence while a maker (ALO) open rests. */
+const MAKER_POLL_MS = 2_500;
 
 /** Notional ceiling from config (same for shared + dedicated). */
 function notionalBudgetUsd(config: AgentConfig, _isDedicated: boolean): number {
@@ -100,6 +112,24 @@ export interface OpenParams {
   /** 128-bit hex cloid tagging the order as this agent's (0x + 32 hex chars). */
   cloid?: Hex;
   slippage?: number;
+  /**
+   * `maker_first` (default when config.makerFirstOpen): ALO at the touch,
+   * bounded wait, IOC remainder. `ioc`: legacy taker-only path.
+   */
+  execution?: 'maker_first' | 'ioc';
+}
+
+/**
+ * Same agent identity (0x + 'HTAI' + 8-hex agent hash = 18 chars), fresh
+ * random tail. Used for the IOC leg after a maker leg so both fills carry
+ * the agent prefix (positionIdentity matches on prefix only) without ever
+ * reusing a cloid HL may still associate with the resting/cancelled order.
+ */
+export function deriveSiblingCloid(cloid: Hex): Hex {
+  const prefix = cloid.slice(0, 18);
+  let tail = '';
+  for (let i = 0; i < 16; i += 1) tail += Math.floor(Math.random() * 16).toString(16);
+  return `${prefix}${tail}` as Hex;
 }
 
 export interface AdapterResult {
@@ -432,6 +462,55 @@ export async function getMidPrice(symbol: string): Promise<number> {
   const px = Number(mids[symbol.toUpperCase()]);
   if (!Number.isFinite(px) || px <= 0) throw new Error(`No mid price for ${symbol}`);
   return px;
+}
+
+/**
+ * Canonical HL coin name for info queries: main dex upper-case (`BTC`),
+ * builder dex `{dex}:{COIN}` with the dex lower-case (`xyz:TSLA`). Agent
+ * configs / the monitor loop upper-case whole symbols (`XYZ:TSLA`), which HL
+ * does not accept for `l2Book`.
+ */
+export function hlCoinName(symbol: string): string {
+  const i = symbol.indexOf(':');
+  if (i > 0) return `${symbol.slice(0, i).toLowerCase()}:${symbol.slice(i + 1).toUpperCase()}`;
+  return symbol.toUpperCase();
+}
+
+/**
+ * L2 book snapshot for a perp (main dex or HIP-3), cycle-cached with an age
+ * bound. Never throws — a missing book degrades to "no book context" (the
+ * open path then falls back to allMids + static tier slippage).
+ */
+export async function getBookSnapshot(
+  symbol: string,
+  maxAgeMs: number = BOOK_PROMPT_MAX_AGE_MS,
+): Promise<BookSnapshot | null> {
+  const coin = hlCoinName(symbol);
+  const fetch = async (): Promise<BookSnapshot | null> => {
+    const raw = await withHlRetry(() => info.l2Book({ coin }), HL_WEIGHT.l2Book);
+    return parseL2Book(symbol, raw as Parameters<typeof parseL2Book>[1]);
+  };
+  try {
+    const cache = cycleCache();
+    return cache ? await cache.getL2Book(coin, fetch, maxAgeMs) : await fetch();
+  } catch (err) {
+    console.warn(`[hl] l2Book ${coin} failed:`, err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+/**
+ * Spread ceiling (bps) for the open gate. Tier defaults reflect normal HL
+ * books: BTC/ETH ~1 bp, liquid alts single digits, thin alts tens; HIP-3
+ * equities are wide off-session by design. `BOOK_MAX_SPREAD_BPS` overrides.
+ */
+export function maxSpreadBpsFor(symbol: string): number {
+  if (config.bookMaxSpreadBpsOverride != null) return config.bookMaxSpreadBpsOverride;
+  if (symbolDex(symbol)) return 100;
+  const tier = liquidityTier(symbol);
+  if (tier === 'major') return 15;
+  if (tier === 'mid') return 35;
+  return 80;
 }
 
 /**
@@ -845,19 +924,72 @@ export class HlAgentExecutionAdapter {
     }
 
     const isBuy = params.direction === 'LONG';
-    // Explicit caller slip wins; otherwise majors stay at 0.5%, thin alts wider.
-    const baseSlip =
-      params.slippage ?? resolveOpenSlippage(params.symbol, params.sizeUsd);
-    let slip = baseSlip;
+    const side: TakeSide = isBuy ? 'buy' : 'sell';
+
+    // ── Maker leg (ALO at the touch, bounded wait) ─────────────────────────
+    // Fee math: HL taker 4.5 bps vs maker 1.5 bps base — with the builder fee
+    // on top, every maker-filled dollar is ~3 bps cheaper. Needs a fresh book
+    // to know the touch; without one we go straight to IOC.
+    const wantMaker =
+      (params.execution ?? (config.makerFirstOpen ? 'maker_first' : 'ioc')) === 'maker_first';
+    let remainingUsd = params.sizeUsd;
+    let makerNote = '';
+    let makerFilledUnits = 0;
+    let iocCloid: Hex | undefined = params.cloid;
+    if (wantMaker) {
+      const book = await getBookSnapshot(params.symbol, BOOK_EXEC_MAX_AGE_MS);
+      if (book) {
+        const before = await this.getPosition(params.symbol).catch(() => null);
+        const beforeSignedUnits = before
+          ? (before.direction === 'LONG' ? 1 : -1) * before.sizeUnits
+          : 0;
+        const mk = await this.tryMakerOpen({
+          symbol: params.symbol,
+          meta,
+          isBuy,
+          book,
+          sizeUsd: params.sizeUsd,
+          cloid: params.cloid,
+          beforeSignedUnits,
+        });
+        makerNote = mk.note;
+        makerFilledUnits = mk.filledUnits;
+        if (mk.submitted && params.cloid) iocCloid = deriveSiblingCloid(params.cloid);
+        remainingUsd = Math.max(0, params.sizeUsd - mk.filledUnits * mk.px);
+        if (mk.filledUnits > 0 && remainingUsd < HL_MIN_ORDER_NOTIONAL_USD) {
+          return { ok: true, detail: `maker filled ${mk.filledUnits} @ ${mk.px} [${mk.note}]` };
+        }
+      } else {
+        makerNote = 'no book — ioc only';
+      }
+    }
+
+    // ── Taker leg (IOC, depth-aware band) ──────────────────────────────────
+    // Explicit caller slip wins. Otherwise size the band off the live book
+    // (worst level needed ×1.5 + 10 bps, floor 15 bps) and price it off the
+    // BOOK mid (seconds old) instead of the cycle-cached allMids (minutes
+    // old). Static tier table remains the fallback when no book is available.
+    let slip: number | null = params.slippage ?? null;
     let last: AdapterResult = { ok: false, detail: 'open failed' };
 
     // At most 2 attempts: initial band, then one widen on IOC no-match only.
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const mid = await getMidPrice(params.symbol);
+      const book = await getBookSnapshot(params.symbol, attempt === 0 ? BOOK_EXEC_MAX_AGE_MS : 0);
+      const mid = book?.mid ?? (await getMidPrice(params.symbol));
+      if (slip == null) {
+        slip =
+          (book ? resolveBookSlippage(book, side, remainingUsd) : null) ??
+          resolveOpenSlippage(params.symbol, remainingUsd);
+      }
       const px = isBuy ? mid * (1 + slip) : mid * (1 - slip);
-      const sizeUnits = params.sizeUsd / mid;
+      const sizeUnits = remainingUsd / mid;
       const s = formatSize(sizeUnits, meta.szDecimals);
-      if (Number(s) <= 0) throw new Error(`Order size rounds to zero for ${params.symbol}`);
+      if (Number(s) <= 0) {
+        if (makerFilledUnits > 0) {
+          return { ok: true, detail: `maker filled ${makerFilledUnits} [${makerNote}]; remainder rounds to zero` };
+        }
+        throw new Error(`Order size rounds to zero for ${params.symbol}`);
+      }
 
       const result = await withHlExchange(() =>
         this.exchange.order({
@@ -869,7 +1001,7 @@ export class HlAgentExecutionAdapter {
               s,
               r: false,
               t: { limit: { tif: 'Ioc' } },
-              ...(params.cloid ? { c: params.cloid } : {}),
+              ...(iocCloid ? { c: iocCloid } : {}),
             },
           ],
           grouping: 'na',
@@ -878,20 +1010,19 @@ export class HlAgentExecutionAdapter {
       );
       this.invalidateAfterWrite();
       last = interpretOrderResult(result);
+      const bandTag = `slip=${(slip * 100).toFixed(2)}%${book ? ' book' : ' tier'}`;
       if (last.ok) {
-        if (attempt > 0) {
-          return {
-            ok: true,
-            detail: `${last.detail} [ioc_retry slip=${(slip * 100).toFixed(1)}%]`,
-          };
-        }
-        return last;
+        const legs = makerFilledUnits > 0 ? ` [maker ${makerFilledUnits} + ioc; ${makerNote}]` : makerNote ? ` [${makerNote}]` : '';
+        return {
+          ok: true,
+          detail: `${last.detail} [${attempt > 0 ? 'ioc_retry ' : ''}${bandTag}]${legs}`,
+        };
       }
       if (attempt === 0 && isIocNoMatch(last.detail)) {
         const next = widenSlippage(slip);
         if (next > slip + 1e-9) {
           console.warn(
-            `[hl] IOC no-match on open ${params.symbol}; retry slip ${(slip * 100).toFixed(1)}%→${(next * 100).toFixed(1)}%`,
+            `[hl] IOC no-match on open ${params.symbol}; retry slip ${(slip * 100).toFixed(2)}%→${(next * 100).toFixed(2)}%`,
           );
           slip = next;
           continue;
@@ -899,7 +1030,196 @@ export class HlAgentExecutionAdapter {
       }
       break;
     }
+    // A partial maker fill IS a live position — report success so the caller
+    // tracks it (it reads the real size/entry from HL) instead of orphaning it.
+    if (makerFilledUnits > 0) {
+      return {
+        ok: true,
+        detail: `maker filled ${makerFilledUnits} [${makerNote}]; ioc remainder failed: ${last.detail}`,
+      };
+    }
     return last;
+  }
+
+  /**
+   * Post-only open at the touch (buy → best bid, sell → best ask) tagged with
+   * the agent cloid, then poll `orderStatus` until filled / gone / timeout.
+   * On timeout: cancel, re-read status (cancel can race a fill), and report
+   * how much filled so the caller sizes the IOC remainder.
+   *
+   * Never throws for order-level rejections (e.g. badAloPxRejected when the
+   * book moved through our price) — those just mean "no maker fill".
+   */
+  private async tryMakerOpen(args: {
+    symbol: string;
+    meta: AssetMeta;
+    isBuy: boolean;
+    book: BookSnapshot;
+    sizeUsd: number;
+    cloid?: Hex;
+    /** Signed position units before the order (fallback fill settlement). */
+    beforeSignedUnits: number;
+  }): Promise<{ filledUnits: number; px: number; note: string; submitted: boolean }> {
+    const px = args.isBuy ? args.book.bestBid : args.book.bestAsk;
+    const s = formatSize(args.sizeUsd / px, args.meta.szDecimals);
+    const origUnits = Number(s);
+    if (!(origUnits > 0)) return { filledUnits: 0, px, note: 'alo size rounds to zero', submitted: false };
+    const pStr = formatPrice(px, args.meta.szDecimals, 'perp');
+    const startedAt = Date.now();
+
+    let placed: unknown;
+    try {
+      placed = await withHlExchange(() =>
+        this.exchange.order({
+          orders: [
+            {
+              a: args.meta.assetId,
+              b: args.isBuy,
+              p: pStr,
+              s,
+              r: false,
+              t: { limit: { tif: 'Alo' } },
+              ...(args.cloid ? { c: args.cloid } : {}),
+            },
+          ],
+          grouping: 'na',
+          builder: { b: config.builderAddress as Hex, f: config.builderFeeTenthsBps },
+        }),
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // SDK throws on order-level errors too; a rejected ALO never rested.
+      return { filledUnits: 0, px, note: `alo rejected: ${msg.slice(0, 120)}`, submitted: false };
+    }
+    this.invalidateAfterWrite();
+
+    const status = (placed as { response?: { data?: { statuses?: unknown[] } } })?.response?.data
+      ?.statuses?.[0];
+    if (!status || typeof status !== 'object') {
+      return { filledUnits: 0, px, note: 'alo unexpected status', submitted: true };
+    }
+    const st = status as Record<string, any>;
+    if ('error' in st) {
+      return { filledUnits: 0, px, note: `alo rejected: ${String(st.error).slice(0, 120)}`, submitted: false };
+    }
+    if ('filled' in st) {
+      const units = Number(st.filled?.totalSz ?? origUnits) || origUnits;
+      return { filledUnits: units, px: Number(st.filled?.avgPx ?? px) || px, note: 'alo filled immediately', submitted: true };
+    }
+    const oid = Number(st.resting?.oid);
+    if (!Number.isFinite(oid)) {
+      return { filledUnits: 0, px, note: 'alo resting without oid', submitted: true };
+    }
+
+    // ── Wait loop ──────────────────────────────────────────────────────────
+    const readStatus = async (): Promise<{ state: string; remaining: number } | null> => {
+      const os = (await withHlRetry(
+        () => (info as any).orderStatus({ user: this.tradingAddress, oid }),
+        HL_WEIGHT.orderStatus,
+      ).catch(() => null)) as Record<string, any> | null;
+      if (!os || os.status !== 'order') return os ? { state: 'unknown', remaining: origUnits } : null;
+      const inner = os.order ?? {};
+      const state = String(inner.status ?? 'open');
+      const rem = Number(inner.order?.sz);
+      const orig = Number(inner.order?.origSz);
+      const remaining =
+        state === 'filled'
+          ? 0
+          : Number.isFinite(rem)
+            ? rem
+            : Number.isFinite(orig)
+              ? orig
+              : origUnits;
+      return { state, remaining };
+    };
+
+    let state = 'open';
+    let remaining = origUnits;
+    const deadline = startedAt + config.makerWaitMs;
+    while (Date.now() < deadline) {
+      await sleep(Math.min(MAKER_POLL_MS, Math.max(250, deadline - Date.now())));
+      const snap = await readStatus();
+      if (!snap) continue;
+      state = snap.state;
+      remaining = snap.remaining;
+      if (state !== 'open') break;
+    }
+
+    // Timed out while resting (or status lookups kept failing / returned
+    // unknownOid): cancel defensively — an ALO we lost track of must never
+    // stay on the book — then let a final status read settle the fill count.
+    if (state === 'open' || state === 'unknown') {
+      try {
+        await withHlExchange(() =>
+          this.exchange.cancel({ cancels: [{ a: args.meta.assetId, o: oid }] }),
+        );
+      } catch {
+        // Already filled / cancelled — the status re-read below is authoritative.
+      }
+      this.invalidateAfterWrite();
+      const finalSnap = await readStatus();
+      if (finalSnap && finalSnap.state !== 'unknown') {
+        state = finalSnap.state === 'open' ? 'canceled' : finalSnap.state;
+        remaining = finalSnap.remaining;
+      } else {
+        // No authoritative order read. Assuming "nothing filled" risks a
+        // double-size position (IOC on top of a fill) — the worse failure —
+        // so settle from the position delta instead.
+        const after = await this.getPosition(args.symbol).catch(() => null);
+        const afterSigned = after ? (after.direction === 'LONG' ? 1 : -1) * after.sizeUnits : 0;
+        const delta = (afterSigned - args.beforeSignedUnits) * (args.isBuy ? 1 : -1);
+        remaining = Math.max(0, origUnits - Math.max(0, Math.min(origUnits, delta)));
+        state = remaining <= 1e-12 ? 'filled' : 'canceled';
+      }
+    }
+
+    const filledUnits = Math.max(0, Math.min(origUnits, origUnits - remaining));
+    const elapsedS = ((Date.now() - startedAt) / 1000).toFixed(1);
+    return {
+      filledUnits,
+      px,
+      note: `alo ${state} ${filledUnits}/${s} @ ${pStr} in ${elapsedS}s`,
+      submitted: true,
+    };
+  }
+
+  /**
+   * Cancel resting NON-trigger orders on `symbol` that carry this agent's
+   * cloid prefix. A worker crash mid maker-wait would otherwise leave an ALO
+   * on the book that fills later into an untracked position. Cheap: reads the
+   * cycle-cached open-orders list; only writes when something is found.
+   */
+  async cancelStaleAgentOrders(symbol: string, cloidPrefix: string): Promise<number> {
+    this.assertSymbolAllowed(symbol);
+    const orders = await this.listOpenOrdersRaw(symbol).catch(() => [] as Array<Record<string, any>>);
+    const sym = symbol.toUpperCase();
+    const prefix = cloidPrefix.toLowerCase();
+    const stale = orders.filter((o) => {
+      if (String(o.coin ?? '').toUpperCase() !== sym) return false;
+      const cloid = String(o.cloid ?? '').toLowerCase();
+      if (!cloid || !cloid.startsWith(prefix)) return false;
+      if (classifyTpslKind(o)) return false;
+      if (o.isTrigger === true || o.isPositionTpsl === true) return false;
+      return Number.isFinite(Number(o.oid));
+    });
+    if (!stale.length) return 0;
+    const meta = await getAssetMeta(symbol);
+    let cancelled = 0;
+    for (const o of stale) {
+      try {
+        await withHlExchange(() =>
+          this.exchange.cancel({ cancels: [{ a: meta.assetId, o: Number(o.oid) }] }),
+        );
+        cancelled += 1;
+      } catch {
+        // Filled/cancelled meanwhile — nothing to do.
+      }
+    }
+    if (cancelled) {
+      this.invalidateAfterWrite();
+      console.warn(`[hl] cancelled ${cancelled} stale agent order(s) on ${sym}`);
+    }
+    return cancelled;
   }
 
   /**
@@ -1062,23 +1382,27 @@ export class HlAgentExecutionAdapter {
     }
   }
 
+  /** Cycle-cached frontendOpenOrders for this trading address on `symbol`'s dex. */
+  private async listOpenOrdersRaw(symbol: string): Promise<Array<Record<string, any>>> {
+    const user = this.tradingAddress;
+    const dex = symbolDex(symbol);
+    const cache = cycleCache();
+    const fetchOrders = () =>
+      withHlRetry(
+        () => (info as any).frontendOpenOrders({ user, ...(dex ? { dex } : {}) }),
+        HL_WEIGHT.frontendOpenOrders,
+      ) as Promise<Array<Record<string, any>>>;
+    // Cache key must separate dex order books from main; the composite key
+    // rides through HlCycleCache's map untyped.
+    const cacheKey = (dex ? `${user}|${dex}` : user) as Hex;
+    const orders = cache ? await cache.getOpenOrders(cacheKey, fetchOrders) : await fetchOrders();
+    return orders ?? [];
+  }
+
   async listTpslOrders(symbol: string): Promise<TpslOpenOrder[]> {
     const out: TpslOpenOrder[] = [];
     try {
-      const user = this.tradingAddress;
-      const dex = symbolDex(symbol);
-      const cache = cycleCache();
-      const fetchOrders = () =>
-        withHlRetry(
-          () => (info as any).frontendOpenOrders({ user, ...(dex ? { dex } : {}) }),
-          HL_WEIGHT.frontendOpenOrders,
-        ) as Promise<Array<Record<string, any>>>;
-      // Cache key must separate dex order books from main; the composite key
-      // rides through HlCycleCache's map untyped.
-      const cacheKey = (dex ? `${user}|${dex}` : user) as Hex;
-      const orders = cache
-        ? await cache.getOpenOrders(cacheKey, fetchOrders)
-        : await fetchOrders();
+      const orders = await this.listOpenOrdersRaw(symbol);
       const sym = symbol.toUpperCase();
       for (const o of orders ?? []) {
         if (String(o.coin ?? '').toUpperCase() !== sym) continue;

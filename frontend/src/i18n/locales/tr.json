@@ -358,6 +358,8 @@
     "decisionSkippedUserConflict": "Girilmedi — bu coini siz işlem yapıyordunuz",
     "decisionSkippedPeer": "Atlandı — başka ajanınızda bu coin zaten var",
     "decisionSkippedBudget": "Atlandı — bütçe tamamen dolu",
+    "decisionSkippedThinBook": "Atlandı — emir defteri ince",
+    "decisionSkippedThinBookBody": "Canlı emir defteri bu emri temiz karşılayamadı; ajan kayma ödemek yerine bekledi",
     "decisionSkippedStopped": "Durduruldu",
     "decisionSkippedStoppedBody": "Ajan durduruldu",
     "decisionSkippedPaused": "Duraklatıldı",

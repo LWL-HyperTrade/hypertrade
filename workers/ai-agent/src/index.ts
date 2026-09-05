@@ -33,6 +33,10 @@ import {
   persistAgentHealth,
 } from './lib/agentHealth.js';
 import { getOpenPositions, logDecision } from './stores.js';
+import {
+  backfillSignalOutcomes,
+  resetSignalSnapshotCycle,
+} from './lib/signalSnapshots.js';
 import type { AgentRow } from './types.js';
 import type { CoinglassMarketData } from './data/coinglass.js';
 
@@ -231,6 +235,18 @@ async function cycle(): Promise<void> {
 
   const { marketData, validKeys, keysLabel } = await buildSymbolCache(agents);
   console.log(`[cycle] phase 1 done: ${marketData.size} series (symbol×interval), ${keysLabel}`);
+
+  // Signal calibration data: fill forward returns for earlier snapshots from
+  // the bars we just fetched, then open a fresh dedupe window for this
+  // cycle's writes (monitor.ts records one row per symbol×interval×horizon).
+  resetSignalSnapshotCycle();
+  const outcomes = await backfillSignalOutcomes(marketData).catch((err) => {
+    console.warn('[signals] backfill hook error:', err);
+    return { scanned: 0, updated: 0 };
+  });
+  if (outcomes.scanned > 0) {
+    console.log(`[signals] outcomes backfilled ${outcomes.updated}/${outcomes.scanned}`);
+  }
 
   // Sticky narratives: 2×/day off-hour slots (02:30 Asia, 15:30 US). No-op
   // outside the claim window; agents only read the cached board.

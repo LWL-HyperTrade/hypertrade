@@ -33,6 +33,7 @@ Apply **in this order** (later files are additive `ALTER`s / functions):
 | 5 | `backend/migrations/ai_agents_health_column.sql` — `ai_agents.health` |
 | 6 | `backend/migrations/ai_agents_activate_under_cap.sql` — `activate_ai_agent_under_cap()` RPC |
 | 7 | `backend/migrations/ai_agents_close_reason_labels.sql` — comments only |
+| 8 | `backend/migrations/ai_signal_snapshots.sql` — `ai_signal_snapshots` (per-cycle flags/score/book + back-filled forward returns; calibration data, no trade-path reads). Optional: worker logs a warning and continues if absent, or set `SIGNAL_SNAPSHOTS_ENABLED=0` |
 
 Skip this entire block if you are not shipping AI agents.
 
@@ -98,6 +99,7 @@ Defined in `backend/supabase_schema.sql`.
 | `ai_agent_positions` | Tracked positions + `thesis`, `close_reason`, cloid prefix |
 | `ai_agent_decisions` | Decision + reasoning jsonb (+ optional `provider` / `model`) |
 | `ai_agent_runs` | Per-cycle audit + `equity_snapshot` |
+| `ai_signal_snapshots` | Per symbol×interval×horizon per cycle: `flags`, composite scores, HL mid, L2 `book`; `ret_1h/4h/24h` + `max_up/max_down` back-filled from bars on later cycles |
 | `global_context_cache` | Shared TTL cache (e.g. Deribit DVOL) for the worker |
 
 Control plane: `backend/ai_agents.py` + FastAPI routes. Execution: `workers/ai-agent/` (service role only).

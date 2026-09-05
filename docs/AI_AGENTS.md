@@ -79,6 +79,21 @@ Stack:
 | `DRY_RUN_DEFAULT` | Present on some deploys; **not read** by current `config.ts` — prefer DB default + `FORCE_DRY_RUN` / `AI_AGENT_ALLOW_SHADOW_TOGGLE` on the API. Safe to leave unused or remove after verifying |
 | `COINGLASS_GLOBAL_MODE` | `1` = house key serves all agents (optional) |
 | `CYCLE_MINUTES` / `AGENT_CONCURRENCY` / `MIN_HL_BALANCE_USD` | Optional tunables (defaults in `config.ts`) |
+| `MAKER_FIRST_OPEN` / `MAKER_WAIT_MS` | Opens post an ALO at the touch, wait (default 20s) polling order status, cancel, then IOC the remainder — saves the taker/maker fee gap on every maker-filled dollar. `0` = legacy IOC-only. Closes are always IOC |
+| `BOOK_GATE_ENABLED` / `BOOK_MIN_DEPTH_MULT` / `BOOK_MAX_SPREAD_BPS` | Live L2 gate on fresh opens (`skipped_thin_book`): spread over the per-tier cap (BTC/ETH 15 · mid 35 · thin 80 · HIP-3 100 bps, or the global override), size not fillable inside the 3% IOC ceiling, or taking-side depth within 50 bps < `BOOK_MIN_DEPTH_MULT` (default 3) × order. Applies to shadow agents too; never to closes |
+| `SIGNAL_SNAPSHOTS_ENABLED` | `0` disables `ai_signal_snapshots` writes/backfill (needs migration 8 in [DATABASE.md](./DATABASE.md)) |
+
+### Execution path (opens)
+
+1. **Decision-time book read** — one `l2Book` REST snapshot per symbol per cycle (weight 2, cycle-cached ≤5 min) feeds a `LIVE HL BOOK` block in the opening prompt (spread, top-5 imbalance, depth within ±10/±50 bps). Framed as execution context, not a thesis.
+2. **Gate** — after sizing, a seconds-fresh snapshot decides whether the book can absorb *this* size (see env table). Logged as `skipped_thin_book` with the book fields.
+3. **Maker leg** — post-only limit at best bid (long) / best ask (short) tagged with the agent cloid, bounded wait, cancel, final status read. Partial fills count.
+4. **Taker leg** — IOC for the remainder, priced off the book mid (not the cycle-cached `allMids`) with a depth-aware band: worst level needed × 1.5 + 10 bps, floor 15 bps, cap 3%, one widen-retry on no-match. Static tier table (`hl/liquidityTier.ts`) is the fallback when no book is available. The IOC leg uses a sibling cloid (same agent prefix) so identity tracking is unaffected.
+5. **Orphan guard** — every cycle, per symbol, resting non-trigger orders with the agent's cloid prefix are cancelled before deciding (a crash mid maker-wait must not leave an ALO that fills unattended).
+
+### Signal calibration data
+
+`ai_signal_snapshots` records, per symbol × bar interval × horizon per cycle, the `ScalperFlags`, composite long/short scores, HL mid, and book summary; later cycles back-fill bar-to-bar `ret_1h/4h/24h` and max favorable/adverse excursions from the CoinGlass series already fetched in Phase 1. This is the prerequisite for ever replacing the hand-set 30/30/20/10/10 composite weights with fitted ones — nothing reads it on the trade path.
 
 8. Shadow toggle from the app requires backend `AI_AGENT_ALLOW_SHADOW_TOGGLE=1` (local/dev). New agents default `dry_run` false in DB (`ai_agents_dry_run_default_false.sql`).
 

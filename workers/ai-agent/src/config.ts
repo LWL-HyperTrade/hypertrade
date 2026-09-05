@@ -111,6 +111,40 @@ export const config = {
     1,
     Number(process.env.MIN_HL_BALANCE_USD ?? '100') || 100,
   ),
+  /**
+   * Live L2 book gate on fresh opens (hl/bookSnapshot.ts). Skips an open when
+   * the spread is too wide, the size does not fit inside the IOC ceiling, or
+   * taking-side depth within 50 bps is < BOOK_MIN_DEPTH_MULT × order size.
+   * Closes are never gated. `BOOK_GATE_ENABLED=0` disables (book still
+   * feeds the prompt + slippage band when available).
+   */
+  bookGateEnabled: (process.env.BOOK_GATE_ENABLED ?? '1') !== '0',
+  bookMinDepthMult: Math.max(1, Number(process.env.BOOK_MIN_DEPTH_MULT ?? '3') || 3),
+  /**
+   * Optional global spread cap (bps) overriding the per-tier defaults in
+   * hl/adapter.ts `maxSpreadBpsFor`. Unset → tier defaults.
+   */
+  bookMaxSpreadBpsOverride: (() => {
+    const n = Number(process.env.BOOK_MAX_SPREAD_BPS ?? '');
+    return Number.isFinite(n) && n > 0 ? n : null;
+  })(),
+  /**
+   * Maker-first opens: post an ALO (post-only) at the touch, wait up to
+   * MAKER_WAIT_MS polling order status, cancel, then IOC any remainder.
+   * Saves the taker/maker fee gap on every filled maker leg. Closes always
+   * stay IOC (exit certainty > bps). `MAKER_FIRST_OPEN=0` → legacy IOC-only.
+   */
+  makerFirstOpen: (process.env.MAKER_FIRST_OPEN ?? '1') !== '0',
+  makerWaitMs: Math.min(
+    120_000,
+    Math.max(3_000, Number(process.env.MAKER_WAIT_MS ?? '20000') || 20_000),
+  ),
+  /**
+   * Signal snapshots (ai_signal_snapshots): per symbol×interval×horizon per
+   * cycle, flags + composite score + book, with forward returns back-filled
+   * on later cycles. `SIGNAL_SNAPSHOTS_ENABLED=0` disables both writes.
+   */
+  signalSnapshotsEnabled: (process.env.SIGNAL_SNAPSHOTS_ENABLED ?? '1') !== '0',
 } as const;
 
 /** Thin alts → riskPerTradePct (2%); BTC/ETH + mid-liquid → riskPerTradePctLiquid (4%). */

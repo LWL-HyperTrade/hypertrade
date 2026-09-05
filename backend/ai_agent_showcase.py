@@ -37,6 +37,7 @@ _SHOWCASE_SKIP_TYPES = frozenset(
         "skipped_trend_filter",
         "skipped_budget",
         "skipped_margin",
+        "skipped_thin_book",
         "skipped_direction_mandate",
         "skipped_no_data",
         "skipped_no_price",
@@ -713,6 +714,13 @@ def _slim_decision_row(row: Dict[str, Any]) -> Dict[str, Any]:
                 headline = "Budget full"
             elif dtype == "skipped_margin":
                 headline = "Low margin"
+            elif dtype == "skipped_thin_book":
+                headline = "Thin book"
+                if not body:
+                    body = (
+                        "The live order book could not absorb this order cleanly — "
+                        "waiting for better liquidity instead of paying the slippage"
+                    )
             elif dtype in ("skipped_no_data", "skipped_no_price"):
                 headline = "No market data"
                 if not body:

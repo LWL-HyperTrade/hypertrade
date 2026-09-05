@@ -10,6 +10,7 @@
  * in the adapter (never unbounded).
  */
 
+import { estimateSweep, type BookSnapshot, type TakeSide } from './bookSnapshot.js';
 import { liquidityTier } from './liquidityTier.js';
 
 /** Historical worker default — BTC/ETH keep this. */
@@ -20,6 +21,33 @@ export const SLIPPAGE_MID = 0.008;
 export const SLIPPAGE_THIN = 0.015;
 /** Absolute ceiling for adaptive + retry widen. */
 export const SLIPPAGE_MAX = 0.03;
+/**
+ * Floor for the depth-aware band. The IOC price is computed off a book mid
+ * that is ≤ a few seconds old; 15 bps absorbs that drift on majors without
+ * handing the book a free 50 bps pick-off like the static tier did.
+ */
+export const SLIPPAGE_MIN_BOOK = 0.0015;
+/** Safety margin added on top of the measured sweep (queue moves between snapshot and order). */
+const BOOK_SLIP_BUFFER = 0.001;
+const BOOK_SLIP_MULT = 1.5;
+
+/**
+ * Depth-aware IOC band: walk the taking side for `sizeUsd`, take the worst
+ * level actually needed, pad it (×1.5 + 10 bps), clamp to [floor, max].
+ * Returns null when the size does not fit inside SLIPPAGE_MAX — the caller
+ * should fall back to the static tier (and the open gate will usually have
+ * skipped such an order already).
+ */
+export function resolveBookSlippage(
+  book: BookSnapshot,
+  side: TakeSide,
+  sizeUsd: number,
+): number | null {
+  const est = estimateSweep(book, side, sizeUsd, SLIPPAGE_MAX);
+  if (!est.fullyFillable || est.worstSlipFrac == null) return null;
+  const slip = est.worstSlipFrac * BOOK_SLIP_MULT + BOOK_SLIP_BUFFER;
+  return Math.min(SLIPPAGE_MAX, Math.max(SLIPPAGE_MIN_BOOK, slip));
+}
 
 export function isIocNoMatch(detail: string): boolean {
   return /could not immediately match|immediately match against any resting/i.test(

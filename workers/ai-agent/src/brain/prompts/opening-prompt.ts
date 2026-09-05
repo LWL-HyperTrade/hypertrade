@@ -72,6 +72,7 @@ import {
   renderXyzSessionSection,
 } from '../../data/xyzSession.js';
 import { supportsDeribitDvol } from '../../data/deribit.js';
+import { renderBookSection, type BookSnapshot } from '../../hl/bookSnapshot.js';
 import { sanitizeMonitorSummary, stripHip3DexPrefix } from './sanitizeSummary.js';
 import {
   assetClassOf,
@@ -116,6 +117,8 @@ export interface OpeningPromptInput {
   macroBeta?: MacroBetaContext | null;
   /** Crypto-only stretch / exhaustion (RSI + EMA + wall-clock pctls). */
   cryptoExtension?: CryptoExtensionContext | null;
+  /** Live HL L2 snapshot (spread / imbalance / depth) — execution context. */
+  book?: BookSnapshot | null;
   /** Entry appetite — changes gates + guard language, never size bands. */
   riskProfile?: RiskProfile;
   /** Time structure — flag windows, stop anchors, TP floor (brain/horizon.ts). */
@@ -184,6 +187,8 @@ export function buildOpeningPrompt(input: OpeningPromptInput): string {
     ? renderCryptoExtensionOpeningRules(input.cryptoExtension)
     : '';
   const stickyBlock = renderStickyNarrativesSection(input.stickyNarratives);
+  // Live L2 read — sizes/patience only; the block itself says it is not a thesis.
+  const bookBlock = renderBookSection(input.book);
   const tickerCatalystBlock = renderStickySymbolCatalystsSection(input.stickySymbolCatalysts);
   const lastCloseBlock = renderLastSymbolCloseSection(input.lastSymbolClose);
   // Whales: venue $1M+ on THIS symbol only (renderWhaleSection no-ops if none).
@@ -469,7 +474,7 @@ ${optionsBlock}
 **TIMESTAMP**: ${new Date().toISOString()}
 ${equityOptionsLead}
 ${microBlock}
-${sessionBlock}${xyzSessionBlock}${calendarBlock}${stickyBlock}${tickerCatalystBlock}${lastCloseBlock}${dailyBlock}${emaBlock}${betaBlock}${earningsBlock}${equityOptionsLater}${etfBlock}${positioningBlock}${whaleBlock}${optionsPositioningBlock}${moodBlock}${extensionBlock}${horizonBlock}${mandateBlock}${profileBlock}
+${sessionBlock}${xyzSessionBlock}${bookBlock}${calendarBlock}${stickyBlock}${tickerCatalystBlock}${lastCloseBlock}${dailyBlock}${emaBlock}${betaBlock}${earningsBlock}${equityOptionsLater}${etfBlock}${positioningBlock}${whaleBlock}${optionsPositioningBlock}${moodBlock}${extensionBlock}${horizonBlock}${mandateBlock}${profileBlock}
 
 **COMPOSITE SCORES** (0-100):
 - Long Score: ${score.longScore} | Drivers: ${score.driversLong.join(', ') || 'none'}

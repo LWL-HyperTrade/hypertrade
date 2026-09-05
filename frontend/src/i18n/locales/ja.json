@@ -358,6 +358,8 @@
     "decisionSkippedUserConflict": "見送り — この銘柄を取引中でした",
     "decisionSkippedPeer": "スキップ — 別のエージェントがこの銘柄を保有中",
     "decisionSkippedBudget": "スキップ — 予算を使い切り",
+    "decisionSkippedThinBook": "見送り — 板が薄い",
+    "decisionSkippedThinBookBody": "板にこの注文をきれいに通す厚みがなかったので、スリッページを払う代わりに待ちました",
     "decisionSkippedStopped": "停止中",
     "decisionSkippedStoppedBody": "エージェントは停止されていました",
     "decisionSkippedPaused": "一時停止",

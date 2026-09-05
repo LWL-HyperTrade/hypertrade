@@ -358,6 +358,8 @@
     "decisionSkippedUserConflict": "Fuera — estabas operando esta moneda",
     "decisionSkippedPeer": "Omitido — otro de tus agentes ya tiene esta moneda",
     "decisionSkippedBudget": "Omitido — presupuesto agotado",
+    "decisionSkippedThinBook": "Omitido — libro poco líquido",
+    "decisionSkippedThinBookBody": "El libro de órdenes no podía absorber esta orden sin rozar, así que el agente esperó en vez de pagar el deslizamiento",
     "decisionSkippedStopped": "Detenido",
     "decisionSkippedStoppedBody": "El agente fue detenido",
     "decisionSkippedPaused": "Pausado",

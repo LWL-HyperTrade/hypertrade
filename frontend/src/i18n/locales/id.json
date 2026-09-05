@@ -358,6 +358,8 @@
     "decisionSkippedUserConflict": "Tidak masuk — Anda sedang trading koin ini",
     "decisionSkippedPeer": "Dilewati — agen Anda yang lain sudah punya koin ini",
     "decisionSkippedBudget": "Dilewati — anggaran sudah penuh",
+    "decisionSkippedThinBook": "Dilewati — buku order tipis",
+    "decisionSkippedThinBookBody": "Buku order saat ini tidak bisa menelan order ini dengan rapi, jadi agen menunggu daripada membayar slippage",
     "decisionSkippedStopped": "Berhenti",
     "decisionSkippedStoppedBody": "Agen dihentikan",
     "decisionSkippedPaused": "Jeda",

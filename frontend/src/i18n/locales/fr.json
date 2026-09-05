@@ -358,6 +358,8 @@
     "decisionSkippedUserConflict": "Resté hors — vous négociiez déjà cette crypto",
     "decisionSkippedPeer": "Ignoré — un autre de vos agents a déjà cette crypto",
     "decisionSkippedBudget": "Ignoré — budget entièrement alloué",
+    "decisionSkippedThinBook": "Ignoré — carnet trop peu liquide",
+    "decisionSkippedThinBookBody": "Le carnet d'ordres n'aurait pas absorbé cet ordre proprement, alors l'agent a patienté plutôt que de payer le slippage",
     "decisionSkippedStopped": "Arrêté",
     "decisionSkippedStoppedBody": "L'agent a été arrêté",
     "decisionSkippedPaused": "En pause",

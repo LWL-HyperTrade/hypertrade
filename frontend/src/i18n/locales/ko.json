@@ -358,6 +358,8 @@
     "decisionSkippedUserConflict": "미진입 — 이 코인을 직접 거래 중이었습니다",
     "decisionSkippedPeer": "건너뜀 — 다른 에이전트가 이미 이 코인을 보유",
     "decisionSkippedBudget": "건너뜀 — 예산 소진",
+    "decisionSkippedThinBook": "건너뜀 — 호가가 얇음",
+    "decisionSkippedThinBookBody": "호가창이 이 주문을 무리 없이 소화하기 어려워, 슬리피지를 감수하는 대신 기다렸습니다",
     "decisionSkippedStopped": "중지됨",
     "decisionSkippedStoppedBody": "에이전트가 중지됨",
     "decisionSkippedPaused": "일시중지",

@@ -28,6 +28,8 @@ export type HlWalletBundle = {
 };
 
 type CacheEntry<T> = { promise: Promise<T> };
+/** Entry with an issue time so callers can demand a maximum age. */
+type AgedEntry<T> = { promise: Promise<T>; at: number };
 
 /** Main-dex meta + asset ctxs (funding, mark, OI, …) — one fetch per cycle. */
 export type HlMetaAndAssetCtxs = [meta: { universe: { name: string }[] }, assetCtxs: any[]];
@@ -38,6 +40,8 @@ export class HlCycleCache {
   private userFills = new Map<string, CacheEntry<any[]>>();
   private mids: CacheEntry<Record<string, string>> | null = null;
   private metaAndAssetCtxs: CacheEntry<HlMetaAndAssetCtxs> | null = null;
+  /** L2 book snapshots by HL coin name — books move, so entries carry an age. */
+  private l2Books = new Map<string, AgedEntry<unknown>>();
 
   clear(): void {
     this.wallets.clear();
@@ -45,6 +49,25 @@ export class HlCycleCache {
     this.userFills.clear();
     this.mids = null;
     this.metaAndAssetCtxs = null;
+    this.l2Books.clear();
+  }
+
+  /**
+   * L2 book for `coin`, reusing a cached snapshot no older than `maxAgeMs`.
+   * Prompt context tolerates minutes; execution asks for ~seconds (or 0 to
+   * force a fresh pull). In-flight promises coalesce like the other maps.
+   */
+  getL2Book<T>(coin: string, fetch: () => Promise<T>, maxAgeMs: number): Promise<T> {
+    const key = coin;
+    const hit = this.l2Books.get(key) as AgedEntry<T> | undefined;
+    const now = Date.now();
+    if (hit && now - hit.at <= maxAgeMs) return hit.promise;
+    const promise = fetch().catch((err) => {
+      if (this.l2Books.get(key)?.promise === promise) this.l2Books.delete(key);
+      throw err;
+    });
+    this.l2Books.set(key, { promise, at: now });
+    return promise;
   }
 
   /** Drop cached reads for a trading address after a mutating exchange call. */

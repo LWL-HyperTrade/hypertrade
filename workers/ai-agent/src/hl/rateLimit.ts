@@ -57,6 +57,9 @@ export const HL_WEIGHT = {
   clearinghouseState: 2,
   spotClearinghouseState: 2,
   allMids: 2,
+  /** L2 snapshot and single-order status are in the cheap (weight 2) class. */
+  l2Book: 2,
+  orderStatus: 2,
   meta: 20,
   /** Same weight class as meta (universe + per-asset ctx including funding). */
   metaAndAssetCtxs: 20,

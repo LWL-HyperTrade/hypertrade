@@ -358,6 +358,8 @@
     "decisionSkippedUserConflict": "Ficou de fora — estava a negociar esta moeda",
     "decisionSkippedPeer": "Ignorado — outro dos seus agentes já tem esta moeda",
     "decisionSkippedBudget": "Ignorado — orçamento totalmente alocado",
+    "decisionSkippedThinBook": "Ignorado — livro raso",
+    "decisionSkippedThinBookBody": "O livro de ofertas não absorveria esta ordem sem atrito, então o agente esperou em vez de pagar o slippage",
     "decisionSkippedStopped": "Parado",
     "decisionSkippedStoppedBody": "O agente foi parado",
     "decisionSkippedPaused": "Pausado",

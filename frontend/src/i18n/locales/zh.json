@@ -358,6 +358,8 @@
     "decisionSkippedUserConflict": "未进场 — 您正在交易该币种",
     "decisionSkippedPeer": "跳过 — 您的另一个代理已持有该币种",
     "decisionSkippedBudget": "跳过 — 预算已全部占用",
+    "decisionSkippedThinBook": "跳过 — 盘口过薄",
+    "decisionSkippedThinBookBody": "实时盘口吃不下这单，代理选择等待，而不是硬吃滑点",
     "decisionSkippedStopped": "已停止",
     "decisionSkippedStoppedBody": "代理已停止",
     "decisionSkippedPaused": "已暂停",

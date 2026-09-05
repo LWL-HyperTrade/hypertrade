@@ -56,7 +56,19 @@ import {
 } from './data/cryptoExtension.js';
 import { assetClassOf, isCryptoAsset } from './brain/assetClass.js';
 import { isMetalsOptionsAsset } from './data/equityOptions.js';
-import { HlAgentExecutionAdapter, getHlFundingBps, getMidPrice, effectiveOpenLeverage, isIsolatedOnlyAsset } from './hl/adapter.js';
+import {
+  BOOK_EXEC_MAX_AGE_MS,
+  HlAgentExecutionAdapter,
+  effectiveOpenLeverage,
+  getBookSnapshot,
+  getHlFundingBps,
+  getMidPrice,
+  isIsolatedOnlyAsset,
+  maxSpreadBpsFor,
+} from './hl/adapter.js';
+import { assessBookForOpen, bookLogFields, type BookSnapshot } from './hl/bookSnapshot.js';
+import { SLIPPAGE_MAX } from './hl/slippage.js';
+import { recordSignalSnapshot } from './lib/signalSnapshots.js';
 import { decryptSecret } from './lib/crypto.js';
 import { emptySignals, type CycleHealthSignals } from './lib/agentHealth.js';
 import { CLOSE_REASON, classifyExternalCloseReason } from './lib/closeReason.js';
@@ -806,6 +818,33 @@ export async function executeAgentMonitoring(ctx: MonitorContext): Promise<Monit
     const flags = computeScalperFlags(data, 60 * barFactor, hp.flagWindowScale * barFactor);
     const tracked = stillOpen.find((r) => r.symbol.toUpperCase() === sym) ?? null;
 
+    // Live L2 snapshot (cycle-cached per coin, minutes-old is fine here):
+    // prompt context + signal snapshot. Execution re-pulls a seconds-fresh one.
+    const book = await getBookSnapshot(sym);
+
+    // Signal + outcome logging (item 1): one row per symbol×interval×horizon
+    // per cycle, deduped in-process across agents. Fire-and-forget.
+    void recordSignalSnapshot({
+      cycleTs: barWindowTs,
+      symbol: sym,
+      barIntervalMs: data.barIntervalMs ?? COINGLASS_INTERVAL_MS,
+      horizon: hp.key,
+      tradingEnv: agent.trading_env,
+      price: currentPrice,
+      priceSource,
+      barCloseTs: lastBar.ts,
+      barClose: lastBar.price,
+      flags,
+      score: computeCompositeScore(flags),
+      book,
+    });
+
+    // Orphan guard for maker-first opens: a crash mid ALO-wait leaves a
+    // resting order tagged with our prefix that could fill unattended.
+    if (!effectiveDryRun(agent)) {
+      await adapter.cancelStaleAgentOrders(sym, agentCloidPrefix(agent.id)).catch(() => 0);
+    }
+
     try {
       if (tracked) {
         actionsExecuted += await monitorPosition({
@@ -841,6 +880,7 @@ export async function executeAgentMonitoring(ctx: MonitorContext): Promise<Monit
         actionsExecuted += await considerOpening({
           agent, runId, adapter, sym, flags, data, currentPrice, sessionContext,
           barWindowTs,
+          book,
           hlPositioning: isCryptoAsset(sym) ? hlPositioning : null,
           marketMood: isCryptoAsset(sym) ? marketMood : null,
           stickyNarratives,
@@ -883,6 +923,8 @@ async function considerOpening(args: {
   currentPrice: number;
   /** Wall-clock bar window of this cycle (dedupe key for flat retries). */
   barWindowTs: number;
+  /** Live HL L2 snapshot (prompt context; execution refetches fresher). */
+  book?: BookSnapshot | null;
   hlPositioning: HlPositioningContext | null;
   marketMood: MarketMoodContext | null;
   /** Global sticky macro/theme board (2×/day); all asset classes. */
@@ -1081,6 +1123,7 @@ async function considerOpening(args: {
         equityDaily: args.data.equityDaily ?? null,
         macroBeta: args.macroBeta ?? null,
         cryptoExtension: isCryptoAsset(sym) ? args.data.cryptoExtension ?? null : null,
+        book: args.book ?? null,
         riskProfile,
         horizon: hp.key,
         direction,
@@ -1440,6 +1483,42 @@ async function considerOpening(args: {
     return 0;
   }
 
+  // ── Book gate (item 2): can the live book absorb THIS size sanely? ───────
+  // Seconds-fresh L2 pull. Skips when the spread is wide for the tier, the
+  // size does not fit inside the IOC ceiling, or taking-side depth within
+  // 50 bps is thin relative to the order. Applied before dry-run so shadow
+  // agents mirror live behavior. A missing book never blocks (no data ≠ bad).
+  const takeSide = decision.decision === 'LONG' ? 'buy' : 'sell';
+  const execBook = config.bookGateEnabled
+    ? await getBookSnapshot(sym, BOOK_EXEC_MAX_AGE_MS)
+    : null;
+  const bookGate = execBook
+    ? assessBookForOpen(execBook, takeSide, sizeUsd, {
+        maxSpreadBps: maxSpreadBpsFor(sym),
+        minDepthMult: config.bookMinDepthMult,
+        maxSlipFrac: SLIPPAGE_MAX,
+      })
+    : null;
+  const bookFields = bookLogFields(execBook ?? args.book ?? null, bookGate);
+  if (bookGate && !bookGate.ok) {
+    await logDecision({
+      agentId: agent.id, runId, symbol: sym, type: 'skipped_thin_book',
+      decision: {
+        ...decision,
+        reason: `live book cannot absorb this order cleanly — ${bookGate.reason}`,
+        plannedSizeUsd: sizeUsd,
+        plannedLeverage: leverage,
+        compositeScore: comp.score ?? null,
+        probe: isProbe,
+        ...riskFields,
+        ...bookFields,
+      },
+      reasoning,
+      provider: modelChoice.provider, model: modelChoice.model,
+    });
+    return 0;
+  }
+
   if (effectiveDryRun(agent)) {
     await logDecision({
       agentId: agent.id, runId, symbol: sym, type: 'opening_dry_run',
@@ -1451,6 +1530,7 @@ async function considerOpening(args: {
         ...cryptoExtensionLogFields(args.data.cryptoExtension),
         probe: isProbe,
         ...riskFields,
+        ...bookFields,
       },
       reasoning,
       provider: modelChoice.provider, model: modelChoice.model,
@@ -1550,6 +1630,7 @@ async function considerOpening(args: {
       compositeScore: comp.score ?? null,
       ...cryptoExtensionLogFields(args.data.cryptoExtension),
       probe: isProbe,
+      ...bookFields,
     },
     reasoning,
     provider: modelChoice.provider, model: modelChoice.model,

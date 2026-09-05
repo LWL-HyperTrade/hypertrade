@@ -358,6 +358,8 @@
     "decisionSkippedUserConflict": "Пропуск — вы уже торговали эту монету",
     "decisionSkippedPeer": "Пропуск — другой ваш агент уже в этой монете",
     "decisionSkippedBudget": "Пропуск — бюджет полностью занят",
+    "decisionSkippedThinBook": "Пропуск — тонкий стакан",
+    "decisionSkippedThinBookBody": "Живой стакан не смог бы спокойно принять этот объём, поэтому агент подождал вместо проскальзывания",
     "decisionSkippedStopped": "Остановлен",
     "decisionSkippedStoppedBody": "Агент остановлен",
     "decisionSkippedPaused": "Пауза",

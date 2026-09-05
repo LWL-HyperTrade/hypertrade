@@ -382,6 +382,17 @@ export function decisionSummary(d: AiAgentDecision): {
       pnlPct: null,
     };
   }
+  // Live L2 gate: the book could not absorb the planned size cleanly.
+  if (type === 'skipped_thin_book') {
+    return {
+      headline: String(i18n.t('aiAgents.decisionSkippedThinBook')),
+      body: String(i18n.t('aiAgents.decisionSkippedThinBookBody')),
+      tone: 'neutral',
+      direction,
+      conviction: null,
+      pnlPct: null,
+    };
+  }
   if (type === 'skipped_stopped') {
     return {
       headline: String(i18n.t('aiAgents.decisionSkippedStopped')),

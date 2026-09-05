@@ -359,6 +359,8 @@
     "decisionSkippedUserConflict": "Stayed out — you were trading this coin",
     "decisionSkippedPeer": "Skipped — another of your agents already has this coin",
     "decisionSkippedBudget": "Skipped — budget fully allocated",
+    "decisionSkippedThinBook": "Skipped — thin order book",
+    "decisionSkippedThinBookBody": "The live order book couldn't absorb this order cleanly, so the agent waited instead of paying the slippage",
     "decisionSkippedStopped": "Stopped",
     "decisionSkippedStoppedBody": "Agent was stopped",
     "decisionSkippedPaused": "Paused",
