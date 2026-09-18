@@ -292,6 +292,45 @@ def fetch_privy_user_eth_addresses(privy_user_id: str) -> set[str]:
     return out
 
 
+def classify_privy_eth_wallets(data: Dict[str, Any]) -> Tuple[set[str], set[str]]:
+    """Split a Privy user payload into (embedded, external) EVM addresses.
+
+    Solana / Phantom accounts are ignored — Hyperliquid builders are EVM only.
+    An address listed as both (should not happen) counts as embedded.
+    """
+    embedded: set[str] = set()
+    external: set[str] = set()
+    for acct in data.get("linked_accounts") or []:
+        if not isinstance(acct, dict):
+            continue
+        addr = acct.get("address")
+        if not isinstance(addr, str) or not addr.startswith("0x") or len(addr) != 42:
+            continue
+        chain = str(acct.get("chain_type") or "").lower()
+        atype = str(acct.get("type") or "").lower()
+        if chain == "solana" or "solana" in atype:
+            continue
+        if chain and chain not in ("ethereum", "evm"):
+            continue
+        client = str(
+            acct.get("wallet_client_type") or acct.get("wallet_client") or ""
+        ).lower()
+        connector = str(acct.get("connector_type") or "").lower()
+        addr_l = addr.lower()
+        if (
+            client == "privy"
+            or connector == "embedded"
+            or "embedded" in connector
+        ):
+            embedded.add(addr_l)
+        elif client == "phantom":
+            continue
+        elif "wallet" in atype or chain in ("ethereum", "evm", ""):
+            external.add(addr_l)
+    external -= embedded
+    return embedded, external
+
+
 def user_owns_eth_address(privy_user_id: str, address: str) -> bool:
     """True iff `address` is one of the Privy user's linked ETH wallets.
 

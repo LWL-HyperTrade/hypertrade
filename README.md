@@ -4,7 +4,7 @@ Open-source reference for building a **mobile-native Hyperliquid builder app** �
 
 > **Mobile-first by design.** Most users trade on phones. This repo shows one full-featured path (multi-asset trading on Google Play). You are encouraged to fork narrower products — gold-only, regional equities, single HIP-3 ecosystem, demo/education — using the same infra patterns.
 
-**Live app:** [HyperTrade on Google Play](https://play.google.com/store/apps/details?id=com.hypertrade.app). If Play is blocked (US / UK are geo-fenced), the APK is on [hypertrade.exchange](https://hypertrade.exchange).
+**Live:** [HyperTrade on Google Play](https://play.google.com/store/apps/details?id=com.hypertrade.app) (APK on [hypertrade.exchange](https://hypertrade.exchange) if Play is geo-blocked). **BuilderPad web:** [builderpad.xyz](https://builderpad.xyz).
 
 ---
 
@@ -18,7 +18,7 @@ HyperTrade is a production-style **Expo / React Native** app with a **FastAPI** 
 - **Supabase** — alerts, rewards, push tokens, deposit workers
 - **Railway** — backend hosting (Dockerfile included)
 
-**Also in this reference app (optional for forks):** AI trading agents (`workers/ai-agent`, Tier 2) and UR.APP neobank / banking (IBAN/card, Tier 3). Neither is required to ship a Hyperliquid builder app — see [ROADMAP.md](./docs/ROADMAP.md) tiers.
+**Also in this reference app (optional for forks):** [BuilderPad](https://builderpad.xyz) (`web/` on Vercel — branded Hyperliquid web apps; Pons token launch is a chapter, not the product), AI trading agents (`workers/ai-agent`, Tier 2), and UR.APP neobank / banking (IBAN/card, Tier 3). None of these are required to ship a Hyperliquid mobile builder app — see [ROADMAP.md](./docs/ROADMAP.md).
 
 **Not included:** legal advice or store approval guarantees.
 
@@ -27,14 +27,17 @@ HyperTrade is a production-style **Expo / React Native** app with a **FastAPI** 
 ## Architecture
 
 ```
-Mobile (Expo + Privy)
+Mobile (Expo + Privy)              HyperTrade retail app
     ├──► Hyperliquid API / WS     orders, account stream, builder fee
     └──► Your backend (FastAPI)
               ├──► Supabase
               ├──► Arbitrum RPC + Bridge2 relayer
               └──► Optional: Finnhub, Gemini, FX caches
 
-Optional modules (skip in a minimal fork):
+Optional surfaces (skip in a minimal fork):
+    ├──► web/  (Vite, Vercel)     BuilderPad — builderpad.xyz console
+    │                             + {slug}.builderpad.xyz HL trading apps
+    │                             + optional Pons coin chapter (contracts/pons-v2)
     ├──► UR.APP / Mantle          IBAN, fiat tokens, KYC, cards
     └──► ai-agent-worker          AI agent trading brain (Railway)
 ```
@@ -77,7 +80,9 @@ Database bootstrap: **`backend/supabase_schema.sql`**, then optional migrations 
 | [HL_BUILDER.md](./docs/HL_BUILDER.md) | Builder fees, Bridge2, scaling & rate limits |
 | [COSTS.md](./docs/COSTS.md) | Expected infra / AI / banking costs by tier |
 | [ENVIRONMENT.md](./docs/ENVIRONMENT.md) | All env vars + unused/legacy list |
-| [ROADMAP.md](./docs/ROADMAP.md) | Shipped tiers (HL / banking / AI); HIP-4 is a [separate repo](https://github.com/LWL-OrbCast/orbcast) |
+| [ROADMAP.md](./docs/ROADMAP.md) | Shipped surfaces (HL mobile / BuilderPad web / banking / AI); HIP-4 is a [separate repo](https://github.com/LWL-OrbCast/orbcast) |
+| [BUILDERPAD.md](./docs/BUILDERPAD.md) | BuilderPad product — Vite `web/` at [builderpad.xyz](https://builderpad.xyz) (Vercel); branded HL apps at `{slug}.builderpad.xyz` |
+| [PONS_FORK.md](./docs/PONS_FORK.md) | Optional BuilderPad **coin** chapter: Pons v2 factory fork (Robinhood 4663). Not the BuilderPad product |
 | [MOBILE_RELEASE.md](./docs/MOBILE_RELEASE.md) | Play Store / App Store, D-U-N-S, compliance |
 | [SECURITY.md](./SECURITY.md) | Secrets and reporting |
 
@@ -85,14 +90,15 @@ Database bootstrap: **`backend/supabase_schema.sql`**, then optional migrations 
 
 ## What’s in the repo (tiers)
 
-| Tier | Status | Need it to fork an HL app? |
-|------|--------|----------------------------|
-| **1 — Core HL trading** | Shipped | Yes |
+| Surface | Status | Need it to fork an HL **mobile** app? |
+|---------|--------|---------------------------------------|
+| **1 — Core HL trading** | Shipped (`frontend/` Expo) | Yes |
 | **2 — AI agents** | Shipped (`workers/ai-agent`) | No |
 | **3 — Neobank / banking** (UR.APP IBAN / card) | Shipped in reference app | No |
+| **BuilderPad** | Shipped (`web/` → [builderpad.xyz](https://builderpad.xyz) on Vercel) | No — web console for branded Hyperliquid apps (`{slug}.builderpad.xyz`). Optional Pons token launch lives under this product (`contracts/pons-v2/`), it is not a second product |
 | **HIP-4 outcome markets** | Separate repo — [orbcast](https://github.com/LWL-OrbCast/orbcast) | No — do not add here |
 
-AI builds on HL (Tier 1). Neobank/banking is a separate partner stack (compliance + ops). Minimal forks should keep Privy + Bridge2 + builder fee only. Details: [ROADMAP.md](./docs/ROADMAP.md).
+AI builds on HL (Tier 1). BuilderPad is a **web** product on the same FastAPI / Privy / Supabase stack (not a rewrite of the Expo app). Neobank/banking is a separate partner stack (compliance + ops). Minimal mobile forks should keep Privy + Bridge2 + builder fee only. Details: [ROADMAP.md](./docs/ROADMAP.md) · [BUILDERPAD.md](./docs/BUILDERPAD.md).
 
 ---
 
@@ -123,6 +129,7 @@ You do **not** need to replicate our full asset list or UI. Strong fork strategi
 - One geography or language
 - One HIP-3 deployer vertical
 - Testnet-only education app
+- A branded **web** Hyperliquid desk for a community (keep `web/` / BuilderPad; skip the Play Store path)
 
 Strip features you do not need; keep HL signing + deposits + builder config.
 
@@ -134,14 +141,17 @@ Strip features you do not need; keep HL signing + deposits + builder config.
 hypertrade/
 ├── backend/
 │   ├── server.py              # FastAPI app (core + optional modules)
+│   ├── tenants.py             # BuilderPad tenant helpers (optional)
 │   ├── ai_agents.py           # AI control plane (optional)
 │   ├── supabase_schema.sql    # DB bootstrap
-│   ├── migrations/            # Additive SQL (AI, UR, …)
+│   ├── migrations/            # Additive SQL (AI, UR, BuilderPad, …)
 │   └── .env.example
-├── frontend/
+├── frontend/                  # HyperTrade Expo app (Tier 1)
 │   ├── app/                   # Expo Router screens
 │   ├── src/lib/hyperliquid.ts # HL SDK integration
 │   └── .env.example
+├── web/                       # BuilderPad — Vite + Privy (Vercel → builderpad.xyz)
+├── contracts/pons-v2/         # Optional BuilderPad coin chapter (Pons v2 fork)
 ├── workers/ai-agent/          # AI execution worker (optional; has .env.example)
 ├── showcase/                  # Public AI agents demo site (optional)
 └── docs/
@@ -151,7 +161,16 @@ hypertrade/
 
 ## Credits
 
-TypeScript Hyperliquid client: [`@nktkas/hyperliquid`](https://github.com/nktkas/hyperliquid) by [nktkas](https://github.com/nktkas).
+Built on other people's open work. Thank you.
+
+| Project | What we use it for |
+|---------|-------------------|
+| [Hyperliquid](https://github.com/hyperliquid-dex) — [docs](https://hyperliquid.gitbook.io/hyperliquid-docs), [`hyperliquid-python-sdk`](https://github.com/hyperliquid-dex/hyperliquid-python-sdk) | The exchange every app here trades on: builder codes, agent signing, Bridge2. The official Python SDK is our reference for the exchange/info payloads |
+| [`@nktkas/hyperliquid`](https://github.com/nktkas/hyperliquid) by [nktkas](https://github.com/nktkas) | TypeScript Hyperliquid client used by the mobile app, the web desk and the AI worker |
+| [HypeTerminal](https://github.com/vipineth/hypeterminal) by [vipineth](https://github.com/vipineth) (MIT) | Open-source Hyperliquid terminal — inspiration and reference for the web trading desk in `web/` |
+| [Pons v2](https://github.com/ponsdotdev/ponsfamily) by [Pons](https://www.ponsfamily.com) (MIT) | The bonding-curve launchpad our `contracts/pons-v2/` stack is forked from (renamed `BuilderPad*`, economics changed — see [PONS_FORK.md](./docs/PONS_FORK.md)). Not affiliated with or endorsed by Pons |
+| [Uniswap v4](https://github.com/Uniswap/v4-core) by Uniswap Labs | Graduated tokens trade on the official v4 PoolManager on Robinhood Chain. Vendored interfaces / libraries are MIT except `Pool.sol` and `Position.sol` (BUSL-1.1, change date 2027-06-15) — see `contracts/pons-v2/LICENSE` |
+| [Privy](https://privy.io) · [Supabase](https://supabase.com) · [Robinhood Chain](https://docs.robinhood.com/chain) | Auth + embedded wallets · database · the L2 the creator tokens live on |
 
 ---
 

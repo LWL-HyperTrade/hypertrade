@@ -1,6 +1,6 @@
 # AGENTS.md — guide for coding agents (and humans)
 
-This repo is a **mobile-first Hyperliquid builder** reference app (Expo + FastAPI).
+This repo is a **mobile-first Hyperliquid builder** reference app (Expo + FastAPI), plus an optional **web** product: BuilderPad (`web/` at builderpad.xyz).
 Read this before large edits. Prefer small, tier-aware changes.
 
 **Not the same as** in-app AI trading agents (`workers/ai-agent`). This file is for *you* (Cursor / Claude / etc.) working on the codebase.
@@ -11,9 +11,10 @@ Read this before large edits. Prefer small, tier-aware changes.
 
 | Tier | Ship? | What |
 |------|-------|------|
-| **1 — Core HL** | Required | Privy, Bridge2 deposits, agent signing, builder fee, alerts/rewards |
+| **1 — Core HL** | Required | Privy, Bridge2 deposits, agent signing, builder fee, alerts/rewards (`frontend/` Expo) |
 | **2 — AI agents** | Optional | `/api/ai-agents*`, `workers/ai-agent`, showcase (on HL) |
 | **3 — Neobank / banking** | Optional | IBAN / card via UR.APP, Sumsub KYC, Mantle fiat tokens |
+| **BuilderPad** | Optional | Vite `web/` (Vercel: [builderpad.xyz](https://builderpad.xyz)): branded HL trading apps at `{slug}.builderpad.xyz`. Pons (`contracts/pons-v2/`) is the optional **coin chapter**, not the product |
 
 Default fork path = **Tier 1 only**. See [docs/FORKING.md](./docs/FORKING.md) and [docs/ROADMAP.md](./docs/ROADMAP.md).
 
@@ -33,7 +34,8 @@ Default fork path = **Tier 1 only**. See [docs/FORKING.md](./docs/FORKING.md) an
 | [docs/FORKING.md](./docs/FORKING.md) | Strip modules / rebrand / builder address |
 | [docs/AI_AGENTS.md](./docs/AI_AGENTS.md) | AI agents fork guide (short) |
 | [docs/BANKING_UR.md](./docs/BANKING_UR.md) | Neobank / UR banking fork guide (short) |
-| [docs/AI_AGENTS.md](./docs/AI_AGENTS.md) | AI agents fork guide (optional Tier 2) |
+| [docs/BUILDERPAD.md](./docs/BUILDERPAD.md) | BuilderPad web product (`web/` → builderpad.xyz); branded `{slug}.builderpad.xyz` HL apps |
+| [docs/PONS_FORK.md](./docs/PONS_FORK.md) | Optional BuilderPad coin chapter — Pons v2 factory fork (Robinhood 4663) |
 | [SECURITY.md](./SECURITY.md) | Secrets hygiene |
 
 ---
@@ -42,32 +44,37 @@ Default fork path = **Tier 1 only**. See [docs/FORKING.md](./docs/FORKING.md) an
 
 ```
 frontend/                 Expo Router app
-  app/                    Screens (trade, portfolio, bank*, ai-agents, …)
+  app/                    Screens (trade, portfolio, bank*, ai-agents, t/*, …)
   src/lib/hyperliquid.ts  HL SDK + order signing (client)
   src/lib/hlEnv.ts        mainnet vs demo (testnet) endpoints
+  src/tenants/            Leftover Expo tenant helpers — canonical BuilderPad UI is `web/`
   src/providers/          Privy, builder config, UR account, …
   src/components/bank/    UR neobank / banking UI (Tier 3)
 backend/
   server.py               FastAPI entrypoint (large but sectioned — see below)
+  tenants.py              BuilderPad tenant helpers (optional)
   ai_agents.py            AI control-plane helpers (Tier 2)
   ur_db.py / ur_*.py      UR banking helpers (Tier 3)
   rewards.py              Rewards / referrals
   supabase_schema.sql     Tier 1 DB bootstrap
-  migrations/             AI, UR, app_version_policy SQL
+  migrations/             AI, UR, app_version_policy, builderpad_tenants SQL
 workers/ai-agent/         AI execution worker (Tier 2, no public HTTP)
 showcase/                 Public AI agents demo site (Tier 2)
+web/                      BuilderPad Vite + Privy console (Vercel → builderpad.xyz)
+                          branded HL desks at `{slug}.builderpad.xyz`; not a Pons-only site
+contracts/pons-v2/        Optional BuilderPad coin chapter (Pons v2 fork). Spec: docs/PONS_FORK.md
 docs/                     Human + agent documentation
 ```
 
 ### `server.py` orientation (do **not** read the whole file)
 
-`backend/server.py` is a **big single FastAPI module** (~18k lines). That is intentional for this reference app, not a sign the project is unfinished. Heavy logic already lives in helpers (`ur_*.py`, `ai_agents.py`, `rewards.py`, …); `server.py` is mostly routes + wiring.
+`backend/server.py` is a **big single FastAPI module** (~18k lines). That is intentional for this reference app, not a sign the project is unfinished. Heavy logic already lives in helpers (`ur_*.py`, `ai_agents.py`, `rewards.py`, `tenants.py`, …); `server.py` is mostly routes + wiring.
 
 **Do not open it top-to-bottom.** Jump by section banner (search in the file) or by path:
 
 | Tier | Approx. region | Search for this banner / hint |
 |------|----------------|--------------------------------|
-| **1 — Core HL** | Start → just above UR block (~lines 1–8705) | `/api/health`, `/api/builder-config`, Bridge2, rewards, alerts, demo, market-data |
+| **1 — Core HL** | Start → just above UR block (~lines 1–8705) | `/api/health`, `/api/builder-config`, `/api/tenants*`, Bridge2, rewards, alerts, demo, market-data |
 | **3 — Neobank / UR** | Mid file (~8708–16990) | `UR (Fiat24) integration routes` · `/api/ur/` · webhooks |
 | **2 — AI agents** | Near end (~16993–~18060) | `AI TRADING AGENTS` · `/api/ai-agents` |
 | **Shared app shell** | Very end | CORS middleware, `ALLOWED_ORIGINS` (not tier logic) |
@@ -77,6 +84,7 @@ Optional modules are **additive**: skip the UR and AI sections entirely for a Ti
 | Concern | Hints |
 |---------|--------|
 | Health / builder config | `/api/health`, `/api/builder-config`, `BUILDER_ADDRESS` |
+| BuilderPad tenants | `/api/tenants*`, `tenants.py`, `web/` (canonical UI). Expo `frontend/src/tenants/` + `frontend/app/t/` are leftover — do not ship BuilderPad in the phone app |
 | Privy JWT | `PRIVY_APP_ID`, JWKS verify helpers |
 | Bridge2 / relayer | permit deposit routes, `BRIDGE2_RELAYER_*` |
 | Rewards / referrals | rewards sync, `user_rewards` |
@@ -204,6 +212,6 @@ Human UR docs home: [https://docs.ur.app/](https://docs.ur.app/).
 ## Avoid unless explicitly requested
 
 - Re-adding removed third-party exchange integrations
-- Desktop/web-first trading rewrite
+- Desktop/web-first **rewrite of HyperTrade Expo** (BuilderPad `web/` is already the web product)
 - Folding all SQL into one mega-file without need
 - Broad `server.py` splits mid-feature (prefer docs + targeted extracts)

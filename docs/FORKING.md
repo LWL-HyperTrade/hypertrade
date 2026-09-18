@@ -1,7 +1,7 @@
 # Forking HyperTrade
 
 Practical checklist for builders (and coding agents) who want their own HL mobile app.
-Start from **Tier 1**. AI (Tier 2) and neobank/banking (Tier 3) are optional.
+Start from **Tier 1**. AI (Tier 2), neobank/banking (Tier 3), and **BuilderPad** (`web/` at builderpad.xyz) are optional.
 
 Also read: [AGENTS.md](../AGENTS.md) · [SETUP.md](./SETUP.md) · [DATABASE.md](./DATABASE.md) · [HL_BUILDER.md](./HL_BUILDER.md)
 
@@ -28,7 +28,7 @@ Goal: Privy login → Bridge2 deposit → trade with **your** builder fee.
 6. Firebase: copy `*.example` → real plist/json (gitignored).
 7. Smoke test: [SETUP.md](./SETUP.md) Tier 1 checklist.
 
-You do **not** need UR partner credentials or an AI worker for this path.
+You do **not** need UR partner credentials, an AI worker, or BuilderPad (`web/`) for this path.
 
 HIP-4 outcome / prediction markets are **not** in this repo. Use **[LWL-OrbCast/orbcast](https://github.com/LWL-OrbCast/orbcast)** (own docs + setup). Do not merge HIP-4 UI into a HyperTrade fork unless you are deliberately combining products.
 
@@ -100,24 +100,40 @@ You can leave banking files in the tree unused — Stage 0 is the preferred hide
 
 ---
 
-## 4. Optional ops
+## 4. Skip / strip BuilderPad (optional web product)
+
+BuilderPad is **not** a mobile tier and **not** “the Pons fork.” It is the Vite app in `web/`, deployed on Vercel as [builderpad.xyz](https://builderpad.xyz): creators publish branded **Hyperliquid trading apps** at `{slug}.builderpad.xyz` on shared HyperTrade infra. The Pons v2 contracts in `contracts/pons-v2/` are an optional **token launch chapter** of that wizard. Product: [BUILDERPAD.md](./BUILDERPAD.md). Contracts: [PONS_FORK.md](./PONS_FORK.md).
+
+| Skip | Path / note |
+|------|-------------|
+| Vite console | Do not deploy `web/` (this is what Vercel serves as builderpad.xyz) |
+| Tenant SQL | All `backend/migrations/builderpad_*.sql` |
+| Tenant API | `backend/tenants.py`, `/api/tenants*` in `server.py` |
+| Pons contracts | `contracts/pons-v2/` — only needed if you keep the coin chapter |
+| Expo leftovers | `frontend/src/tenants/`, `frontend/app/t/` — do not treat these as the BuilderPad UI |
+
+If you **do** keep BuilderPad: same Privy **App ID** as the backend, a Privy **Web** client (never the Expo client ID), Vercel for `web/`, and the tenant migrations in [DATABASE.md](./DATABASE.md).
+
+---
+
+## 5. Optional ops
 
 - `backend/migrations/app_version_policy_v1.sql` — update banner; edit seeded store URLs/versions or leave `enabled = false`.
 
 ---
 
-## 5. Rebranding checklist
+## 6. Rebranding checklist
 
 - [ ] `frontend/app.json` — name, slug, scheme, iOS/Android package IDs
 - [ ] Icons / splash / notification icon under `frontend/assets/`
 - [ ] Privy dashboard allowlists / bundle IDs
-- [ ] Backend CORS / allowed origins if you expose a web showcase
+- [ ] Backend CORS / allowed origins if you expose a web showcase or BuilderPad (`web/`)
 - [ ] Rewards copy / referral branding (if you keep rewards)
 - [ ] Remove or replace HyperTrade marketing URLs in committed `app.json` `extra` (OSS hygiene — see ROADMAP)
 
 ---
 
-## 6. Mainnet vs demo
+## 7. Mainnet vs demo
 
 - Demo switches HL to **testnet** via `frontend/src/lib/hlEnv.ts`.
 - Optional backend grants: `HL_TESTNET_MASTER_PK` + `demo_funding` table.
@@ -127,11 +143,11 @@ Details: [HL_BUILDER.md](./HL_BUILDER.md).
 
 ---
 
-## 7. Catalog / niche asset set
+## 8. Catalog / niche asset set
 
 HyperTrade does **not** auto-list every HL or HIP-3 market. To add or remove tickers (core crypto vs XYZ / EntropyIO / other HIP-3), follow **[Listing a new asset](./HL_BUILDER.md#listing-a-new-asset-builder-checklist)** — backend `CRYPTO_METADATA` / `ASSET_METADATA` (optional `dex`, default `xyz`), logos, home order, optional Supabase fundamentals. Subscribe/fund dexes are `HIP3_ENABLED_DEXES` / `EXPO_PUBLIC_HIP3_ENABLED_DEXES` (default `xyz,io`); catalog allowlist is separate so `io:SNDK` cannot replace `xyz:SNDK`.
 
-## 8. Suggested niche forks
+## 9. Suggested niche forks
 
 Keep HL signing + deposits + builder config; drop the rest:
 
@@ -139,10 +155,11 @@ Keep HL signing + deposits + builder config; drop the rest:
 - Regional language pack only
 - Testnet education app (demo mode)
 - Trading-only (no rewards, no banking, no AI)
+- Branded **web** HL app for a community (keep BuilderPad `web/`; skip Expo if you do not need a store listing)
 
 ---
 
-## 9. Tooling for faster forks
+## 10. Tooling for faster forks
 
 Coding agents work better with docs MCPs (Privy, HL, UR, Expo, Supabase, Railway, …).  
 Copy-paste config and notes: **[AGENTS.md](../AGENTS.md)** → “Recommended MCP servers”.

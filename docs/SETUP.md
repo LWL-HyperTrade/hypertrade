@@ -11,6 +11,7 @@ Estimated time: **~45–90 minutes** if you already have Privy, Supabase, and Ra
 - Python 3.11+
 - [Expo dev client](https://docs.expo.dev/develop/development-builds/introduction/) (Expo Go is insufficient for Privy + native modules)
 - Accounts: [Privy](https://privy.io), [Supabase](https://supabase.com), [Railway](https://railway.app) (or any Docker host)
+- Optional BuilderPad web: [Vercel](https://vercel.com) for `web/` (live: [builderpad.xyz](https://builderpad.xyz))
 - Arbitrum RPC URL (Alchemy, Infura, QuickNode, etc.)
 - Hyperliquid **builder code** registered for your wallet (see [HL_BUILDER.md](./HL_BUILDER.md))
 
@@ -32,6 +33,10 @@ pip install -r requirements.txt
 # Frontend
 cd ../frontend
 npm install
+
+# Optional — BuilderPad web console (Vercel in prod)
+cd ../web
+npm install
 ```
 
 ---
@@ -47,6 +52,7 @@ npm install
    | B | `backend/migrations/ai_agents_*.sql` (ordered list in DATABASE.md) | Only if enabling AI agents |
    | C | `backend/migrations/ur_banking_v1.sql` | Only if enabling UR banking |
    | D | `backend/migrations/app_version_policy_v1.sql` | Optional — in-app update banner |
+   | E | `backend/migrations/builderpad_*.sql` (order in DATABASE.md) | Optional — BuilderPad (`web/` → builderpad.xyz; branded `{slug}.builderpad.xyz`) |
 
 3. Copy **Project URL** and **service_role** key (Settings → API).
 
@@ -78,7 +84,11 @@ Before the OSS scrub this client ID was **hardcoded** in `AuthContext.tsx`, whic
 Create a Privy app, then:
 
 1. **App settings → Basics → Domains / allowed origins**  
-   Add any web origins you use (marketing site, wallet-export page, etc.). For API callbacks / partner flows that hit your backend host, include your Railway (or custom) URL **with and without** `www` if both resolve. Follow current [Privy allowed domains](https://docs.privy.io/recipes/dashboard/allowed-domains) guidance.
+   Add any web origins you use (marketing site, wallet-export page, etc.). For API callbacks / partner flows that hit your backend host, include your Railway (or custom) URL **with and without** `www` if both resolve. Follow current [Privy allowed domains](https://docs.privy.io/recipes/dashboard/allowed-domains) guidance.  
+   Tenant apps are `https://{slug}.builderpad.xyz`. Add all of:
+   `https://builderpad.xyz`, `https://www.builderpad.xyz`, `https://*.builderpad.xyz`.
+   The Vite console (`web/`, port 5173) needs `http://localhost:5173` here. OAuth return is `{origin}/login`.
+   For social login on every slug subdomain, leave **OAuth redirect URLs** empty (Privy wildcards are not supported on that list) or you must add each host. Allowed origins wildcards **are** supported.
 
 2. **App settings → Basics → Clients**  
    Create a **mobile** app client ([app clients](https://docs.privy.io/basics/get-started/dashboard/app-clients)). React Native **requires** a client. Set:
@@ -287,6 +297,19 @@ Skip unless you have UR.APP partner credentials.
 
 ---
 
+## 13. Optional — BuilderPad (`web/` on Vercel)
+
+Skip unless you want the **web** product: a console at builderpad.xyz where creators publish branded Hyperliquid trading apps. This is not a Pons-only site; the token launch is an optional wizard chapter. Details: [BUILDERPAD.md](./BUILDERPAD.md).
+
+1. Apply BuilderPad SQL ([DATABASE.md](./DATABASE.md) §5).
+2. `cd web && npm install && npm run dev` → `http://localhost:5173`. Set `VITE_PRIVY_APP_ID` (same App ID as the backend). Empty `VITE_BACKEND_URL` uses the Vite `/api` proxy to local FastAPI. Full `VITE_*` list: [ENVIRONMENT.md](./ENVIRONMENT.md).
+3. Privy: allow `http://localhost:5173` and `https://builderpad.xyz` (plus `https://*.builderpad.xyz`). Use a Privy **Web** client ID if you set `VITE_PRIVY_CLIENT_ID` — never the Expo client.
+4. Production: deploy `web/` to **Vercel** (SPA rewrites in `web/vercel.json`). Point the project at the same backend `VITE_BACKEND_URL` as Railway. Creator hosts `{slug}.builderpad.xyz` need `BUILDERPAD_VERCEL_TOKEN` on the backend.
+
+Pons contracts (`contracts/pons-v2/`) are only required if you keep the coin chapter — [PONS_FORK.md](./PONS_FORK.md).
+
+---
+
 ## Smoke test checklist
 
 ### Tier 1 (required)
@@ -304,6 +327,7 @@ Skip unless you have UR.APP partner credentials.
 - [ ] Demo mode: testnet grant lands (`demo_funding`) — only if `HL_TESTNET_MASTER_PK` set
 - [ ] AI: create agent in shadow/dry-run, see a decision row — only if worker + AI SQL applied
 - [ ] UR: KYC / banking entry opens without 500s — only if UR DDL + partner env present
+- [ ] BuilderPad: `web/` login at `/login`, create/publish an app, branded desk at `/t/{slug}` (or `{slug}.builderpad.xyz`) — only if tenant SQL + `VITE_PRIVY_APP_ID`
 
 ---
 
@@ -312,5 +336,6 @@ Skip unless you have UR.APP partner credentials.
 - [HL builder integration](./HL_BUILDER.md)
 - [Database / Supabase](./DATABASE.md)
 - [Environment reference](./ENVIRONMENT.md)
-- [Roadmap tiers](./ROADMAP.md)
+- [Roadmap](./ROADMAP.md)
+- [BuilderPad web product](./BUILDERPAD.md)
 - [Mobile store compliance](./MOBILE_RELEASE.md)

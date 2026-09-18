@@ -15,6 +15,7 @@ Each file is scoped to **one deploy surface** so you can mirror Railway / EAS wi
 | `backend/.env.example` | FastAPI on Railway (or local uvicorn) |
 | `frontend/.env.example` | Expo / EAS (`EXPO_PUBLIC_*`) |
 | `workers/ai-agent/.env.example` | AI worker Railway service (separate from backend) |
+| `web/` (`VITE_*`) | BuilderPad Vite app — Vercel → [builderpad.xyz](https://builderpad.xyz). Vars in this file under BuilderPad |
 
 Full prose setup: [SETUP.md](./SETUP.md) · Schema: [DATABASE.md](./DATABASE.md) · Forks: [FORKING.md](./FORKING.md).
 
@@ -27,6 +28,7 @@ Full prose setup: [SETUP.md](./SETUP.md) · Schema: [DATABASE.md](./DATABASE.md)
 | **1 — Core HL** | backend + frontend | Backend: `PRIVY_*`, `SUPABASE_*`, `ARBITRUM_RPC_URL`, `BRIDGE2_RELAYER_PRIVATE_KEY`. Mobile: `EXPO_PUBLIC_BACKEND_URL`, `EXPO_PUBLIC_PRIVY_*`, `EXPO_PUBLIC_ARBITRUM_RPC_URL` | Auth, DB, Bridge2, trading UI |
 | **2 — AI agents** | backend **and** AI worker | Same `SUPABASE_*` + **same** `AGENT_KMS_KEY`; worker also needs `HL_BUILDER_*`, `HL_ENV`, CoinGlass/Massive, ≥1 LLM key | Control plane + execution — [AI_AGENTS.md](./AI_AGENTS.md) |
 | **3 — Neobank / banking** | backend (+ Mantle RPCs on mobile) | `UR_ENV`, `UR_PARTNER_ID`, signer + relayer keys, Mantle/Arb RPCs | IBAN/card rails — [BANKING_UR.md](./BANKING_UR.md) |
+| **BuilderPad** | `web/` on Vercel + backend tenant APIs | `VITE_PRIVY_APP_ID`, tenant SQL, optional `VITE_BACKEND_URL` / `BUILDERPAD_*` | Branded HL web apps at `{slug}.builderpad.xyz` — [BUILDERPAD.md](./BUILDERPAD.md). Pons coin chapter is extra |
 
 Optional everywhere: market-data keys, demo/testnet grants, AppsFlyer, Apple review bypass.
 
@@ -53,7 +55,7 @@ Optional everywhere: market-data keys, demo/testnet grants, AppsFlyer, Apple rev
 | `SUPABASE_URL` | Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | Backend DB access (**never** ship to mobile) |
 | `PRIVY_APP_ID` | Verify Privy JWTs (**required** — no hardcoded default) |
-| `PRIVY_APP_SECRET` | Server Privy API (e.g. wallet import / some admin paths) |
+| `PRIVY_APP_SECRET` | Server Privy API (wallet-ownership checks, wallet import, BuilderPad social verification — unset = tenant socials are dropped) |
 | `ARBITRUM_RPC_URL` | Bridge2 relayer + deposit scan |
 | `BRIDGE2_RELAYER_PRIVATE_KEY` | Hot wallet(s) for permit deposits (ETH-funded; comma-separated OK via `BRIDGE2_RELAYER_PRIVATE_KEYS`) |
 
@@ -71,6 +73,7 @@ Optional everywhere: market-data keys, demo/testnet grants, AppsFlyer, Apple rev
 | `HL_BRIDGE2_ADDRESS` | `0x2df1c51e09aecf9cacb7bc98cb1742757f163df7` | HL Bridge2 spender |
 | `ARBITRUM_USDC_ADDRESS` | Native USDC on Arbitrum | Permit token |
 | `ARBITRUM_RPC_URL_FALLBACKS` | — | Comma-separated backup RPCs |
+| `ROBINHOOD_RPC_URL` | `https://rpc.mainnet.chain.robinhood.com` | **Backend only** (`backend/.env` / Railway). Pons v2 reads: quote approval, `getLaunchedToken` verify. Chain id must be 4663. **Not** `web/.env` and **not** the Foundry deploy RPC (those are separate — see below) |
 
 ### Demo / testnet
 
@@ -128,6 +131,28 @@ See `backend/.env.example` and [BANKING_UR.md](./BANKING_UR.md). Core: `UR_ENV`,
 | `APPLE_REVIEW_BYPASS` | `true` relaxes geo-fence for App Review |
 | `ENVIRONMENT` | Non-`production` enables some dev-only behavior |
 
+### BuilderPad tenants (optional)
+
+Optional `BUILDERPAD_PUBLIC_DOMAIN` (default `builderpad.xyz`) is the apex. Live apps are `https://{slug}.{domain}`. CORS for that wildcard is in `server.py` — there is **no** `ALLOWED_ORIGINS` env var.  
+Own-builder activation reuses Bridge2 + `BUILDER_ADDRESS` as the preview fallback. HD 1 must stay Standard. Web desk `b` is `tenants.builder_address`; mobile still pins `EXPO_PUBLIC_HL_BUILDER_ADDRESS` until a follow-up.
+
+Custom domains (Activate only) need the Vercel vars below so HTTPS attaches to the Vite project.
+
+| Variable | Purpose |
+|----------|---------|
+| `BUILDERPAD_PUBLIC_DOMAIN` | Optional. Apex hostname for BuilderPad (default `builderpad.xyz`). No `https://`. Live apps = `{slug}.{this}` |
+| `BUILDERPAD_ACTIVATION_FEE_USDC` | Door fee on Activate (default `5`). Once per builder, Arbitrum USDC |
+| `BUILDERPAD_ACTIVATION_TREASURY` | Recipient of that fee. Unset → `BUILDER_ADDRESS` |
+| `BUILDERPAD_VERCEL_TOKEN` | Vercel token that can add domains to the Vite (`web/`) project. Required for HTTPS on creator hosts |
+| `BUILDERPAD_VERCEL_PROJECT_ID` | That Vercel project id (or name) |
+| `BUILDERPAD_VERCEL_TEAM_ID` | Optional. Team scope for the Vercel API |
+| `BUILDERPAD_VERCEL_CNAME` | CNAME target shown to creators. Default `cname.vercel-dns.com` |
+| `TWITCH_CLIENT_ID` / `TWITCH_CLIENT_SECRET` | Optional. Twitch Helix app token for BuilderPad desk LIVE/offline. Unset → overlay still works, `live` is unknown. Not the creator’s Privy Twitch login |
+
+After a host verifies, add `https://{host}` to Privy **Allowed origins** (same App ID). There is no public Privy API for that list. `{slug}.builderpad.xyz` is already covered by `https://*.builderpad.xyz`.
+
+Canonical app URL is `https://{slug}.builderpad.xyz` (`BUILDERPAD_PUBLIC_DOMAIN` / `VITE_TENANT_BASE_DOMAIN`).
+
 ---
 
 ## Frontend (Expo)
@@ -147,6 +172,28 @@ Injected at build time (`EXPO_PUBLIC_*`). Prefer `.env` / EAS secrets over commi
 | `EXPO_PUBLIC_ENABLE_BANKING` | Tier-3 UI gate. Default **off**. With `BANK_KYC_PAUSED` / `BANK_SERVICE_PAUSED` in `bankKycPause.ts`: Stage 0 off / 1 SOON / 2 KYC live / 3 maintenance PAUSED — see [FORKING.md](./FORKING.md) §3 |
 | `EXPO_PUBLIC_APPSFLYER_DEV_KEY` | Optional |
 | `EXPO_PUBLIC_WHITEPAPER_URL` | Profile whitepaper link. Production: `https://www.hypertrade.exchange/LWL_Whitepaper.pdf` (app fallback matches this if unset) |
+| `EXPO_PUBLIC_TENANT_BASE_DOMAIN` | Optional. Same hostname as `BUILDERPAD_PUBLIC_DOMAIN` (default `builderpad.xyz`). Used in share links `https://{slug}.{domain}` |
+| `EXPO_PUBLIC_TENANT_PUBLIC_ORIGIN` | Legacy. If set, only the hostname is used (same as base domain) |
+| `VITE_PRIVY_APP_ID` | BuilderPad Vite console (`web/`) — same App ID as mobile |
+| `VITE_PRIVY_CLIENT_ID` | Optional. Privy **Web** app client (not the Expo/mobile client). Same idea as OrbCast |
+| `VITE_BACKEND_URL` | BuilderPad Vite console API origin. Empty in `npm run dev` uses `/api` proxy |
+| `VITE_TENANT_BASE_DOMAIN` | Optional. Same default `builderpad.xyz`. Console origin is `https://{this}`; apps are `{slug}.{this}` |
+| `VITE_TENANT_PUBLIC_ORIGIN` | Legacy. If set, hostname is used as the base domain |
+| `VITE_ARBITRUM_RPC_URL` | Optional. Same role as `EXPO_PUBLIC_ARBITRUM_RPC_URL` for the Vite wallet sheet (Arbitrum USDC reads). Unset → viem public RPC |
+| `VITE_WALLETCONNECT_PROJECT_ID` | Optional. Your WalletConnect (Reown) Cloud project ID for Privy's `wallet_connect_qr` login entry on the web console → `config.walletConnectCloudProjectId`. Unset → Privy's shared project (rate-limited, our domains show as unverified in wallets). Alternative: set it in the Privy Dashboard instead. Allowlist `builderpad.xyz`, `www.builderpad.xyz`, `*.builderpad.xyz` on the Reown project. Not a backend var; unrelated to `EXPO_PUBLIC_WALLETCONNECT_PROJECT_ID` (Expo Reown AppKit) though the same project can be reused |
+| `VITE_ROBINHOOD_RPC_URL` | **`web/.env` only** (Vite prefix). Optional. Robinhood Chain (4663) RPC for Pons reads, `simulateContract`, and Privy embedded-wallet sends (`addRpcUrlOverrideToChain`). Unset → public / Privy default RPC. Must be a **Robinhood** endpoint (Alchemy `robinhood-mainnet`), not Arbitrum. Restart Vite after changing it. This is **not** the Foundry `ROBINHOOD_RPC_URL` |
+
+### Pons Foundry (`contracts/pons-v2/`) — separate from web/backend
+
+Three different Robinhood RPC knobs. Do not put Foundry vars in `web/.env`.
+
+| Where | Variable | Used for |
+|-------|----------|----------|
+| `backend/.env` / Railway | `ROBINHOOD_RPC_URL` | FastAPI (`pons.py`) |
+| `web/.env` | `VITE_ROBINHOOD_RPC_URL` | Browser Pons reads / simulate / Privy sends |
+| `contracts/pons-v2/.env` **or** the shell | `ROBINHOOD_RPC_URL` | Foundry **default** (alias `robinhood` in `foundry.toml`). `forge script … --rpc-url robinhood`. Fallback if unset: `--rpc-url robinhood_public` |
+
+Foundry loads `.env` from **`contracts/pons-v2/`** (the Foundry project root), not the repo root and not `web/`. Never commit that file. Keystore import (`cast wallet import`) is user-global — see [PONS_FORK.md](./PONS_FORK.md) §4.
 
 **Firebase:** gitignored `GoogleService-Info.plist` / `google-services.json` — copy from `*.example`.
 

@@ -11,6 +11,9 @@ const DEFAULT_BUILDER_ADDRESS =
   (process.env.EXPO_PUBLIC_HL_BUILDER_ADDRESS ?? '').trim()
   || '0x29a1D36DaEE6B0E0Dd4873dd964677000B6e23EB';
 
+/** Tenant wizard ceiling (10 bps). Address stays the pinned HyperTrade builder. */
+export const TENANT_BUILDER_FEE_MAX_TENTHS = 100;
+
 function normalizeBuilderAddress(address: string): string {
   return address.trim().toLowerCase();
 }
@@ -85,10 +88,39 @@ const BuilderConfigContext = createContext<BuilderConfigContextValue>({
   refreshForWallet: () => {},
 });
 
+let _cachedBuilderFee = DEFAULT_BUILDER_FEE;
+let _cachedBuilderAddress = DEFAULT_BUILDER_ADDRESS;
+let _tenantFeeOverride: number | null = null;
+const _tenantFeeListeners = new Set<(fee: number | null) => void>();
+
+export function setTenantBuilderFeeOverride(feeTenthsBps: number | null) {
+  if (feeTenthsBps == null || !Number.isFinite(feeTenthsBps)) {
+    _tenantFeeOverride = null;
+  } else {
+    _tenantFeeOverride = Math.min(
+      Math.max(0, Math.floor(feeTenthsBps)),
+      TENANT_BUILDER_FEE_MAX_TENTHS,
+    );
+  }
+  _tenantFeeListeners.forEach((fn) => fn(_tenantFeeOverride));
+}
+
+function subscribeTenantBuilderFee(fn: (fee: number | null) => void): () => void {
+  _tenantFeeListeners.add(fn);
+  return () => {
+    _tenantFeeListeners.delete(fn);
+  };
+}
+
 export function BuilderConfigProvider({ children }: { children: ReactNode }) {
   const [config, setConfig] = useState<BuilderConfig | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [walletAddr, setWalletAddr] = useState<string | null>(null);
+  const [tenantFeeTenths, setTenantFeeTenths] = useState<number | null>(
+    () => _tenantFeeOverride,
+  );
+
+  useEffect(() => subscribeTenantBuilderFee(setTenantFeeTenths), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -115,16 +147,20 @@ export function BuilderConfigProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<BuilderConfigContextValue>(() => {
     const trusted = resolveTrustedBuilderConfig(config);
+    const feeTenths =
+      tenantFeeTenths != null
+        ? Math.min(Math.max(0, Math.floor(tenantFeeTenths)), TENANT_BUILDER_FEE_MAX_TENTHS)
+        : trusted.builderFeeTenthsBps;
     return {
       builderAddress: trusted.builderAddress,
-      builderFeeTenthsBps: trusted.builderFeeTenthsBps,
-      builderFeeRate: trusted.builderFeeTenthsBps * 0.00001,
-      builderBaseFee: trusted.builderBaseFee,
-      builderDiscount: trusted.builderDiscount,
+      builderFeeTenthsBps: feeTenths,
+      builderFeeRate: feeTenths * 0.00001,
+      builderBaseFee: tenantFeeTenths != null ? feeTenths : trusted.builderBaseFee,
+      builderDiscount: tenantFeeTenths != null ? 0 : trusted.builderDiscount,
       isLoading,
       refreshForWallet: setWalletAddr,
     };
-  }, [config, isLoading]);
+  }, [config, isLoading, tenantFeeTenths]);
 
   return (
     <BuilderConfigContext.Provider value={value}>
@@ -137,11 +173,6 @@ export function useBuilderConfig() {
   return useContext(BuilderConfigContext);
 }
 
-// Singleton for non-React code (hyperliquid.ts order signing)
-// This gets updated when the provider fetches the config
-let _cachedBuilderFee = DEFAULT_BUILDER_FEE;
-let _cachedBuilderAddress = DEFAULT_BUILDER_ADDRESS;
-
 export function setGlobalBuilderConfig(address: string, feeTenthsBps: number) {
   // Belt-and-suspenders: never cache an unpinned builder address.
   const trusted = resolveTrustedBuilderConfig({
@@ -153,6 +184,7 @@ export function setGlobalBuilderConfig(address: string, feeTenthsBps: number) {
 }
 
 export function getGlobalBuilderFee(): number {
+  if (_tenantFeeOverride != null) return _tenantFeeOverride;
   return _cachedBuilderFee;
 }
 

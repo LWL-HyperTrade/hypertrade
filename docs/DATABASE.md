@@ -61,6 +61,26 @@ backend/migrations/app_version_policy_v1.sql
 
 In-app update banner (`android` / `ios` rows). Seeds disabled placeholders — replace store URLs/versions for your fork.
 
+### 5. BuilderPad (optional web product)
+
+Branded Hyperliquid **web** apps at `{slug}.builderpad.xyz`. Console is Vite `web/` on Vercel ([builderpad.xyz](https://builderpad.xyz)). Not required for Tier 1 mobile trading. Pons columns are the optional coin chapter. See [BUILDERPAD.md](./BUILDERPAD.md). Apply the incremental files if the v1 table already exists.
+
+```text
+backend/migrations/builderpad_tenants_v1.sql
+backend/migrations/builderpad_tenant_order_est_fee.sql
+backend/migrations/builderpad_tenant_order_reduce_only.sql
+backend/migrations/builderpad_tenant_order_settlement.sql
+backend/migrations/builderpad_builder_wallets.sql
+backend/migrations/builderpad_imported_builder.sql
+backend/migrations/builderpad_tenant_coin.sql
+backend/migrations/builderpad_tenant_wizard_draft.sql
+backend/migrations/builderpad_tenant_fee_history.sql
+backend/migrations/builderpad_tenant_custom_domain.sql
+backend/migrations/builderpad_tenant_pledge.sql
+backend/migrations/builderpad_pledge_burn_of_buyback.sql
+backend/migrations/builderpad_tenant_stream.sql
+```
+
 ---
 
 ## Table map by tier
@@ -124,6 +144,21 @@ DDL: `backend/migrations/ur_banking_v1.sql`. Helpers: `backend/ur_db.py`. API: F
 
 DDL: `backend/migrations/app_version_policy_v1.sql`.
 
+### BuilderPad (optional web product)
+
+| Table | Role |
+|-------|------|
+| `tenants` | Branded app: slug, catalog, fee tenths, `buyback_pct` (of fee take) / `burn_pct` (of that buyback; both 0–100 independently), `stream_twitch` (desk overlay opt-in; handle is `socials.twitch`), `builder_address` (platform preview or creator HD 1), owner Privy DID. `status=draft` = unpublished wizard (slug reserved, hidden from directory). `wizard_draft` jsonb = chapter + coin terms until publish. `coin_*` columns = Pons v2 launch on Robinhood Chain (token, curve, pair, tx, tax, recipient) written only after the backend re-read the factory record — `builderpad_tenant_coin.sql` + `builderpad_tenant_wizard_draft.sql` + `builderpad_tenant_pledge.sql` + `builderpad_pledge_burn_of_buyback.sql` + `builderpad_tenant_stream.sql` |
+| `tenant_builder_wallets` | One row per creator: HD0 `trade_wallet` vs builder (`source=embedded` HD1, or `source=imported` linked MetaMask). Builder stays Standard, never unify. `provisioned` → `funded` (≥100 USDC perp + Standard) → `active` (apps use that address as `b`). `activation_fee_tx` / `activation_fee_paid_at` = $5 BuilderPad door fee (once). Apply `builderpad_builder_wallets.sql` + `builderpad_imported_builder.sql` + `builderpad_activation_fee.sql` |
+| `tenant_builder_fee_history` | Append-only builder fee changes after publish. Public on tenant cards. Identity (name/logo/bio/socials/catalog) is frozen. Apply `builderpad_tenant_fee_history.sql` |
+| `tenant_pledge_history` | Append-only buyback / burn pledge changes after publish. `buyback_pct` = % of builder-fee take; `burn_pct` = % of that buyback (both 0–100, independent). Not Pons on-chain buyback. Public on tenant cards. Apply `builderpad_tenant_pledge.sql` + `builderpad_pledge_burn_of_buyback.sql` |
+| `tenants.custom_domain` | Creator-owned hostname (Activate only). TXT token + `custom_domain_verified_at`. Apply `builderpad_tenant_custom_domain.sql` |
+| `tenant_order_attributions` | `(wallet, cloid)` / `(wallet, oid)` for orders this client placed. Snapshots `builder_address`. Place-time `notional_usd`, `est_builder_fee_usd` (`tenths/100000`), `side`, `reduce_only`. After fill join: `filled_notional_usd`, `settled_builder_fee_usd` from HL `userFills.builderFee` on `(wallet, oid)` — never cloid alone. Apply `builderpad_tenant_order_est_fee.sql` + `builderpad_tenant_order_reduce_only.sql` + `builderpad_tenant_order_settlement.sql` |
+
+DDL: `backend/migrations/builderpad_tenants_v1.sql`. Helpers: `backend/tenants.py`. API: `/api/tenants*`. Do not attribute volume by cloid prefix alone.
+
+Storage (not SQL): public bucket `tenant-logos`. Backend creates it on first upload (same sanitizer as [OrbCast avatars](https://github.com/LWL-OrbCast/orbcast) — magic bytes, Pillow re-encode to WebP, 2 MB). `tenants.logo_url` stores the public https URL or a pasted https link.
+
 ---
 
 ## Direct client access?
@@ -148,4 +183,4 @@ Exceptions to the mental model: none that forks should rely on — treat Supabas
 - Do **not** assume `supabase_schema.sql` alone is a full production clone — apply optional migration files for the tiers you want.
 - **Single-file “full reference” bootstrap** remains a nice-to-have; the ordered list above is enough for forks.
 
-See also: [SETUP.md](./SETUP.md) · [AI_AGENTS.md](./AI_AGENTS.md) · [BANKING_UR.md](./BANKING_UR.md)
+See also: [SETUP.md](./SETUP.md) · [AI_AGENTS.md](./AI_AGENTS.md) · [BANKING_UR.md](./BANKING_UR.md) · [BUILDERPAD.md](./BUILDERPAD.md)

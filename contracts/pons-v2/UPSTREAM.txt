@@ -1,0 +1,6 @@
+ponsdotdev/ponsfamily contractsV2 @ 79e99efd9d4fab7138b1a5524b907b2f5aae6586 (2026-09-13)
+Excluded: src/v2/testing/*, src/v2/hooks/PonstakingV2_test/* (experiments, not part of the 9-contract stack)
+
+Overlaid with Blockscout-verified sources from PonsV2LaunchAndBuy 0xe33E9E479dF8802cb0866d5d05258bEc4cF62948 (solc 0.8.35, cancun, optimizer 200, viaIR=true). Verified curve/deployer/interfaces are newer than GitHub (snipe tax, CREATE2 salt). BuilderPadFeeEscrow.sol (was PonsV2FeeEscrow.sol) is ours (upstream ships only the interface).
+
+2026-09-14: identifier-only rename PonsV2* -> BuilderPad* (contract names, file names, interface names in ILaunchpadV2.sol). No ABI / selector / event / error / bytecode change (runtime sizes identical). To diff against upstream: sed 's/BuilderPad/PonsV2/g' on our src/.

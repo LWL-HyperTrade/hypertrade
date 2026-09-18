@@ -205,6 +205,7 @@ HT_GITHUB = ext_link("https://github.com/LWL-HyperTrade/hypertrade", "LWL-HyperT
 OC_GITHUB = ext_link("https://github.com/LWL-OrbCast/orbcast", "LWL-OrbCast/orbcast")
 HT_SITE = ext_link("https://hypertrade.exchange", "hypertrade.exchange")
 OC_SITE = ext_link("https://orbcast.xyz", "orbcast.xyz")
+BP_SITE = ext_link("https://builderpad.xyz", "builderpad.xyz")
 
 
 def H1(text: str) -> Paragraph:
@@ -275,14 +276,14 @@ class FeatureStrip(Flowable):
         super().__init__()
         self.items = items
         self.width = width
-        # Tall enough for two-line values without clipping. The previous
-        # version used one-line values and could cut text in narrow pills.
-        self.height = 2.15 * cm
+        # Three-line values (cover Live pill: HyperTrade / OrbCast / BuilderPad).
+        self.height = 2.42 * cm
 
     def draw(self):
         c = self.canv
         gap = 8
         w = (self.width - gap * (len(self.items) - 1)) / len(self.items)
+        value_size = 8.2
         for i, (label, value) in enumerate(self.items):
             x = i * (w + gap)
             c.setFillColor(LIGHT)
@@ -290,23 +291,27 @@ class FeatureStrip(Flowable):
             c.roundRect(x, 0, w, self.height, 9, fill=1, stroke=1)
             c.setFillColor(PURPLE)
             c.setFont("Helvetica-Bold", 8)
-            c.drawString(x + 9, self.height - 18, label.upper())
+            c.drawString(x + 9, self.height - 16, label.upper())
             c.setFillColor(NAVY)
-            c.setFont("Helvetica-Bold", 10.4)
-            words = value.split()
-            line = ""
+            c.setFont("Helvetica-Bold", value_size)
+            # Prefer " · " so product names wrap as units, not mid-name.
+            tokens = [t.strip() for t in value.replace(" · ", "\n").split("\n") if t.strip()]
+            if len(tokens) == 1:
+                tokens = value.split()
             lines: List[str] = []
-            for word in words:
-                test = (line + " " + word).strip()
-                if line and stringWidth(test, "Helvetica-Bold", 10.4) > w - 18:
+            line = ""
+            max_w = w - 16
+            for token in tokens:
+                test = token if not line else f"{line} · {token}" if "·" in value else f"{line} {token}"
+                if line and stringWidth(test, "Helvetica-Bold", value_size) > max_w:
                     lines.append(line)
-                    line = word
+                    line = token
                 else:
                     line = test
             if line:
                 lines.append(line)
-            for j, txt in enumerate(lines[:2]):
-                c.drawString(x + 9, self.height - 39 - j * 12, txt)
+            for j, txt in enumerate(lines[:3]):
+                c.drawString(x + 9, self.height - 34 - j * 11, txt)
 
 
 class Callout(Flowable):
@@ -540,7 +545,7 @@ def story(toc_entries: Sequence[tuple] | None = None) -> List:
     s.append(P("We create open-source, AI-powered onchain solutions that empower users with true ownership of their digital assets.", "CoverSub"))
     s.append(FeatureStrip([
         ("Studio", "Lunatic Wisdom Labs"),
-        ("Live", "HyperTrade · OrbCast"),
+        ("Live", "HyperTrade · OrbCast · BuilderPad"),
         ("Custody", "User-held keys"),
         ("Token", "LWL only"),
         ("Source", "Open"),
@@ -568,13 +573,13 @@ def story(toc_entries: Sequence[tuple] | None = None) -> List:
     s.append(bullets([
         "<b>Self-custody:</b> embedded wallets, user-signed actions, no company balance sheet of user deposits.",
         "<b>Open source:</b> each live product is published so it can be inspected, forked, and improved.",
-        "<b>AI where it fits:</b> HyperTrade includes market intelligence and optional trading agents. OrbCast v1 does not run an AI worker.",
-        "<b>One token:</b> LWL is the only LWL token. Products do not get their own tickers (see §11).",
+        "<b>AI where it fits:</b> HyperTrade includes market intelligence and optional trading agents.",
+        "<b>One token:</b> LWL is the only token. Products do not get their own tickers (see §11).",
     ]))
     s.append(Callout("The studio goal is not to put every market in one app. It is to keep shipping interfaces that stay non-custodial, remain open source, and feed a single token policy when they earn revenue.", tone="blue"))
 
     s.extend(chapter("2. Products"))
-    s.append(P("Two products are live. A further project is listed as in development on the labs site and is not specified in this draft. Products share a custody posture and the LWL token; they do not share one app, one order path, or one compliance stack."))
+    s.append(P("Three products are live. Products share a custody posture and the LWL token; they do not share one app, one order path, or one compliance stack."))
     s.append(make_table([
         ["Product", "What it is", "Where to look"],
         [
@@ -588,18 +593,18 @@ def story(toc_entries: Sequence[tuple] | None = None) -> List:
             f"{OC_SITE} · {OC_GITHUB}",
         ],
         [
-            "Further work",
-            "The labs site lists a next project as in development. This paper does not describe it.",
-            LWL_SITE,
+            "BuilderPad",
+            "Self-custodial web console for branded Hyperliquid trading apps, with an optional creator coin. Shares HyperTrade infra (Privy, Bridge2, builder fees). Not a second mobile binary, and not HIP-4.",
+            f"{BP_SITE} · {HT_GITHUB}",
         ],
     ], [3.2 * cm, 8.4 * cm, 5.0 * cm]))
     s.append(Spacer(1, 0.2 * cm))
-    s.append(P("Technical chapters from §4 onward describe <b>HyperTrade</b> in depth (architecture, wallet, UR.APP, agents). OrbCast is in scope as a sibling product and as a revenue source for LWL — not as a second architecture dump."))
+    s.append(P("Technical chapters from §4 onward describe <b>HyperTrade</b> in depth (architecture, wallet, UR.APP, agents). OrbCast and BuilderPad are in scope as sibling products and as revenue sources for LWL — not as second architecture dumps."))
     s.append(Callout("Shared rails today include Privy embedded wallets, user-signed gasless USDC where a product uses them, and transparent interface fees. What a given product lists, signs, or verifies is product-specific.", tone="blue"))
 
     s.extend(chapter("3. Why Now: Global Stablecoins and Onchain Markets"))
     s.append(P("Stablecoins have become one of crypto's clearest product-market-fit categories: dollar-like balances, global transferability, and fast settlement. At the same time, onchain market infrastructure is moving beyond crypto-only speculation into equities, commodities, FX, index exposure, and event / outcome books."))
-    s.append(P("LWL sits at that convergence with more than one product. A user who wants always-on macro and perps uses HyperTrade. A user who wants event and sports outcomes uses OrbCast. A HyperTrade user who starts with a USDC trading balance can later use portfolio tools, AI analysis, or — if they opt in — card and IBAN rails. Those paths are not copied onto OrbCast."))
+    s.append(P("LWL sits at that convergence with more than one product. A user who wants always-on macro and perps uses HyperTrade. A user who wants event and sports outcomes uses OrbCast. A creator who wants a branded Hyperliquid app (and optionally a coin) uses BuilderPad. A HyperTrade user who starts with a USDC trading balance can later use portfolio tools, AI analysis, or — if they opt in — card and IBAN rails. Those paths are not copied onto OrbCast or BuilderPad."))
     s.append(P("This matters globally. In many markets, access to stable dollar balances, always-on markets, and event markets is more useful than another zero-utility token. The labs thesis is that useful financial interfaces will outperform purely narrative-driven crypto applications."))
     s.append(FeatureStrip([
         ("Stablecoins", "payments + savings"),
@@ -724,7 +729,7 @@ def story(toc_entries: Sequence[tuple] | None = None) -> List:
     s.extend(chapter("7. Markets and Execution", style="smart"))
     s.append(P("HyperTrade's live trading path uses Hyperliquid: info APIs, exchange APIs, WebSocket state, API-wallet order signing, builder fee approvals, and environment-scoped caches for live vs test."))
     s.append(P("Onchain perpetual markets are expanding beyond crypto. Public reporting in early 2026 cited Hyperliquid HIP-3 markets reaching roughly $1.4B in open interest, with oil and other non-crypto markets driving significant demand. HyperTrade can list HIP-3 providers such as XYZ Markets and other deployers as they bring more of those books onchain — oil, gold, forex, large equities, and major indices — rather than only crypto-native tickers."))
-    s.append(P(f"Outcome / prediction markets are a separate LWL product. <b>OrbCast</b> ({OC_SITE}, {OC_GITHUB}) is the HIP-4 interface: binary and multi-outcome books, sports as the showcase, self-custody, and no perps, HIP-3, banking, or AI worker in v1. HIP-4 is not a HyperTrade roadmap item and is not folded into the HyperTrade tab."))
+    s.append(P(f"Outcome / prediction markets are a separate LWL product. <b>OrbCast</b> ({OC_SITE}, {OC_GITHUB}) is the HIP-4 interface: binary and multi-outcome books, sports as the showcase, self-custody, and no perps, HIP-3, banking, or AI worker in v1. HIP-4 is not a HyperTrade roadmap item and is not folded into the HyperTrade tab. <b>BuilderPad</b> ({BP_SITE}) is a separate web surface on the same HyperTrade stack: creators publish a branded perps/spot app (and optionally a coin). It is not an outcomes product."))
     s.append(P("Perpetuals, non-crypto HIP-3 books, and outcome books all point at the same user demand: trading views about the world, not only crypto token prices. LWL meets that demand with more than one product."))
     s.append(FlowDiagram("HyperTrade trading setup", [
         ("Fund", "User moves USDC into trading balance."),
@@ -735,12 +740,13 @@ def story(toc_entries: Sequence[tuple] | None = None) -> List:
 
     # 8–13 — revenue through risk; tokenomics at §11; regulatory sits just before appendix
     s.extend(chapter("8. Revenue Model and Sustainable Growth", style="smart"))
-    s.append(P(f"LWL products are designed as interface layers. They do not need to operate a matching engine, custodian, market maker balance sheet, or exchange back office to begin monetizing. HyperTrade sits on Privy, Arbitrum USDC, optional {UR_APP} IBAN rails, Supabase, Railway, and Hyperliquid execution. OrbCast uses the same class of wallet and interface-fee model on HIP-4 books."))
-    s.append(P("Where a product takes a transparent builder or interface fee, users approve a fee cap and orders can include that product's builder code. Revenue is usage-based. <b>Any</b> realized LWL product revenue — HyperTrade, OrbCast, and future revenue-generating projects — can fund LWL buybacks and burns. The share applied is dynamic and never below 70% (see §11). Alignment is simple: revenue grows with real product use, not with custody or hidden spreads."))
+    s.append(P(f"LWL products are designed as interface layers. They do not need to operate a matching engine, custodian, market maker balance sheet, or exchange back office to begin monetizing. HyperTrade sits on Privy, Arbitrum USDC, optional {UR_APP} IBAN rails, Supabase, Railway, and Hyperliquid execution. OrbCast uses the same class of wallet and interface-fee model on HIP-4 books. BuilderPad uses the HyperTrade web stack for branded apps."))
+    s.append(P("Where a product takes a transparent builder or interface fee, users approve a fee cap and orders can include that product's builder code. Revenue is usage-based. <b>Any</b> realized LWL product revenue — HyperTrade, OrbCast, BuilderPad, and future revenue-generating projects — can fund LWL buybacks and burns. The share applied is dynamic and never below 70% (see §11). Alignment is simple: revenue grows with real product use, not with custody or hidden spreads."))
     s.append(make_table([
         ["Revenue Stream", "Product", "Why It Scales"],
         ["Builder / interface fees", "HyperTrade (active)", "Usage-based order flow through the interface, with user-approved fee caps."],
         ["Builder / interface fees", "OrbCast", "Same fee class on HIP-4 outcome flow as that product earns it."],
+        ["Builder / interface fees", "BuilderPad", "Creator-set builder fee on fills through their branded app; optional one-time activate fee."],
         ["Cards and payments", "HyperTrade (roadmap)", f"Possible partner revenue from card activity, IBAN top-ups, FX/spend, or negotiated share with {UR_APP}."],
         ["AI-assisted agents", "HyperTrade (active)", "House LLM + market-data pipeline; monetization aligned with fees on agent-originated flow."],
         ["Future products", "LWL", "Any later revenue-generating LWL project uses the same single-token buyback and burn policy."],
@@ -798,13 +804,14 @@ def story(toc_entries: Sequence[tuple] | None = None) -> List:
         f"<b>HyperTrade:</b> expand optional stablecoin utility through {UR_APP} IBAN accounts, Fiat Only card partnerships, and everyday finance use cases.",
         "<b>HyperTrade:</b> operate AI Trading Agents (Shared and Dedicated) with worker-side brain, global market cache, and named-agent signing.",
         "<b>OrbCast:</b> grow the HIP-4 outcome catalog and sports/event UX. No perps, banking, or AI worker in v1.",
+        "<b>BuilderPad:</b> grow branded Hyperliquid apps (and optional creator coins) on the existing web stack. No HIP-4, banking, or AI worker in v1.",
         "Maintain non-custodial architecture as each product expands.",
         "Deepen loyalty-tier fee discounts as usage and product surface area grow.",
     ]))
 
     # 10
     s.extend(chapter("11. LWL Tokenomics", style="smart"))
-    s.append(P(f"<b>LWL</b> is the token of <b>Lunatic Wisdom Labs LLC</b>. It is the <b>only</b> LWL token. HyperTrade, OrbCast, and any later LWL product do not get their own tickers. LWL launched via a <b>fair launch</b> on Uniswap through <b>pools.trade</b> on Robinhood Chain."))
+    s.append(P(f"<b>LWL</b> is the token of <b>Lunatic Wisdom Labs LLC</b>. It is the <b>only</b> LWL token. HyperTrade, OrbCast, BuilderPad, and any later LWL product do not get their own tickers. LWL launched via a <b>fair launch</b> on Uniswap through <b>pools.trade</b> on Robinhood Chain."))
     s.append(P("Max supply is <b>1,000,000,000 LWL</b> (1 billion). No additional mint is described in this document."))
     s.append(make_table([
         ["Allocation", "Share", "Tokens", "Terms"],
@@ -815,7 +822,7 @@ def story(toc_entries: Sequence[tuple] | None = None) -> List:
     ], [3.4 * cm, 2.2 * cm, 3.6 * cm, 7.2 * cm]))
     s.append(Callout("AI agents allocation: the 10% LWL reserved for AI agents is <b>not for sale</b> and can be treated as outside active circulation. A time lock is not the same as a burn — those tokens remain in existence until a future burn mechanism, if introduced, removes them.", tone="blue"))
     s.append(H2("Buybacks and burns"))
-    s.append(P("Product activity supports LWL through on-market <b>buybacks and burns</b>, not by selling reserved allocations. The policy applies to <b>any</b> realized LWL revenue: HyperTrade, OrbCast, and future revenue-generating projects."))
+    s.append(P("Product activity supports LWL through on-market <b>buybacks and burns</b>, not by selling reserved allocations. The policy applies to <b>any</b> realized LWL revenue: HyperTrade, OrbCast, BuilderPad, and future revenue-generating projects."))
     s.append(bullets([
         "<b>Single token:</b> only LWL. The labs will not issue a separate token per product.",
         "<b>Source:</b> realized product revenue (interface / builder fees and any later LWL revenue lines), plus 100% of pools.trade creator fees from the LWL fair-launch pool.",
@@ -830,11 +837,11 @@ def story(toc_entries: Sequence[tuple] | None = None) -> List:
         f"<b>LWL token:</b> {ext_link('https://robinhoodchain.blockscout.com/token/0x7bb3E171EC502F65C08D38a61D51B9841524A72D', '0x7bb3E171EC502F65C08D38a61D51B9841524A72D')}",
         f"<b>Lock contract:</b> {ext_link('https://robinhoodchain.blockscout.com/address/0x20f0137CD23411bc165BE14eA0a4F8D59E59C505', '0x20f0137CD23411bc165BE14eA0a4F8D59E59C505')}",
     ]))
-    s.append(P("LWL is not required to use HyperTrade, OrbCast, hold a wallet, or trade. This section describes token supply, locks, and revenue-linked buybacks and burns only. It is not an offer, solicitation, or investment advice.", "Small"))
+    s.append(P("LWL is not required to use HyperTrade, OrbCast, BuilderPad, hold a wallet, or trade. This section describes token supply, locks, and revenue-linked buybacks and burns only. It is not an offer, solicitation, or investment advice.", "Small"))
 
     # 11
     s.extend(chapter("12. Risk, Security, and Trust Model", style="smart"))
-    s.append(P("Each LWL product is a user interface, not a custodian. The table below is HyperTrade-weighted because that is where banking, 7702 relays, and AI agents live. OrbCast inherits the wallet, relayer, and interface-fee rows that apply to it; it does not inherit UR.APP, Sumsub, 7702 banking, or AI-agent key rows."))
+    s.append(P("Each LWL product is a user interface, not a custodian. The table below is HyperTrade-weighted because that is where banking, 7702 relays, and AI agents live. OrbCast inherits the wallet, relayer, and interface-fee rows that apply to it. BuilderPad inherits those same wallet and interface-fee rows on the HyperTrade web stack. Neither inherits UR.APP, Sumsub, 7702 banking, or AI-agent key rows."))
     s.append(P("HyperTrade's security model is narrow by design. User wallets sign. Relayers relay. The trading venue executes. Supabase coordinates operational state. This separation reduces the blast radius of any one component and keeps wallet-key custody with users for the trading stack; optional UR.APP fiat-token flows add a regulated compliance layer governed by UR.APP (§6.1)."))
     s.append(make_table([
         ["Risk", "Current Control"],
@@ -853,7 +860,7 @@ def story(toc_entries: Sequence[tuple] | None = None) -> List:
 
     # 12 — regulatory context immediately before appendix
     s.extend(chapter("13. Regulatory and Policy Landscape", style="smart"))
-    s.append(P("LWL products should be understood as user interfaces and wallet-connected applications, not as custodians. Market type still differs by product: HyperTrade is a perpetuals and optional-banking interface; OrbCast is an outcome-markets interface. Those are different legal and store surfaces. This distinction is increasingly important as regulators clarify how self-custodial trading interfaces fit within existing frameworks."))
+    s.append(P("LWL products should be understood as user interfaces and wallet-connected applications, not as custodians. Market type still differs by product: HyperTrade is a perpetuals and optional-banking interface; OrbCast is an outcome-markets interface; BuilderPad is a branded Hyperliquid trading interface (web), not a new venue. Those are different legal and store surfaces. This distinction is increasingly important as regulators clarify how self-custodial trading interfaces fit within existing frameworks."))
     s.append(P("In April 2026, SEC Division of Trading and Markets staff issued a statement on broker-dealer registration for certain user interfaces used to prepare crypto asset securities transactions. The statement is not a Commission rule and has no independent legal force, but it is directionally important: it describes conditions under which staff would not object to certain covered user interface providers operating without broker-dealer registration, including self-custodial wallet contexts, objective parameters, educational material, disclosures, and no custody of user funds."))
     s.append(P("LWL product design is consistent with several principles highlighted in that staff statement: users control wallets, the app prepares transaction parameters, fees and limitations should be disclosed, and the interface should avoid discretionary control over user funds or execution decisions. This is not legal advice, and product rollout must continue to be reviewed jurisdiction by jurisdiction."))
     s.append(P("Separately, the Hyperliquid Policy Center launched in February 2026 as an independent research and advocacy organization focused on decentralized market infrastructure, perpetual derivatives, and practical regulatory frameworks. Policy clarity around decentralized markets can reduce uncertainty for builders, partners, and users of interfaces in that ecosystem."))
@@ -865,6 +872,7 @@ def story(toc_entries: Sequence[tuple] | None = None) -> List:
         f"<b>Labs:</b> {LWL_SITE} — Lunatic Wisdom Labs LLC, Wyoming, USA.",
         f"<b>HyperTrade:</b> {HT_SITE} · {HT_GITHUB}",
         f"<b>OrbCast:</b> {OC_SITE} · {OC_GITHUB}",
+        f"<b>BuilderPad:</b> {BP_SITE} · {HT_GITHUB} (<i>web/</i> in the HyperTrade tree)",
     ]))
     s.append(H2("Regulatory and ecosystem references"))
     s.append(bullets([
@@ -905,6 +913,12 @@ def story(toc_entries: Sequence[tuple] | None = None) -> List:
         "No perps, HIP-3, UR.APP banking, or AI worker in v1.",
         "Small",
     ))
+    s.append(P(
+        "<b>BuilderPad codebase anchors:</b> Vite + Privy web console in the HyperTrade tree (<i>web/</i>); dual EOAs (trade vs builder); "
+        "preview vs own-builder activation; branded apps at {slug}.builderpad.xyz; optional Pons v2 creator coin on Robinhood Chain. "
+        "No HIP-4, UR.APP banking, or AI worker in v1.",
+        "Small",
+    ))
     s.append(P("This document is not legal, investment, tax, or trading advice. Product roadmap items are forward-looking and subject to provider, regulatory, technical, and market constraints.", "Small"))
     return s
 
@@ -916,14 +930,15 @@ This is the editable companion source for `LWL_Whitepaper.pdf`.
 
 ## Core thesis
 
-Lunatic Wisdom Labs LLC publishes open-source, onchain products that keep users in control of their keys. Live products are HyperTrade (trading + optional finance + optional AI agents) and OrbCast (HIP-4 outcome markets). One token: LWL. Buybacks and burns are funded from any LWL product revenue, at a dynamic share that is never less than 70%.
+Lunatic Wisdom Labs LLC publishes open-source, onchain products that keep users in control of their keys. Live products are HyperTrade (trading + optional finance + optional AI agents), OrbCast (HIP-4 outcome markets), and BuilderPad (branded Hyperliquid apps + optional creator coin). One token: LWL. Buybacks and burns are funded from any LWL product revenue, at a dynamic share that is never less than 70%.
 
 ## Key themes
 
 - Labs vision: AI & self-custody, open source, no intermediaries
-- Product portfolio: HyperTrade, OrbCast; further work listed as in development
+- Product portfolio: HyperTrade, OrbCast, BuilderPad
 - HyperTrade: casual and advanced trading interface (technical depth from §4)
 - OrbCast: HIP-4 outcomes / sports showcase; no perps, banking, or AI worker in v1
+- BuilderPad: branded Hyperliquid web apps + optional creator coin; shares HyperTrade infra; no HIP-4, banking, or AI worker in v1
 - Privy wallet onboarding and ERC-4337 smart-wallet path
 - Arbitrum USDC and gasless permit relayers
 - UR.APP integration (HyperTrade, optional): External Wallet Access, Fiat Only cards, Sumsub SDK KYC
@@ -936,6 +951,7 @@ Lunatic Wisdom Labs LLC publishes open-source, onchain products that keep users 
 Labs: https://www.lunaticwisdomlabs.com/
 HyperTrade: https://github.com/LWL-HyperTrade/hypertrade
 OrbCast: https://github.com/LWL-OrbCast/orbcast
+BuilderPad: https://builderpad.xyz
 
 The final PDF is generated by `generate_whitepaper_v2.py`.
 """

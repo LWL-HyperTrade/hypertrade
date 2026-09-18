@@ -43,11 +43,35 @@ export function isExternalEthereumLinkedAccount(
   return (account as { connector_type?: string }).connector_type !== 'embedded';
 }
 
+function rawEmbeddedHdIndex(account: LinkedAccount): number | null {
+  const raw = account as { wallet_index?: number; walletIndex?: number };
+  const n = raw.wallet_index ?? raw.walletIndex;
+  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+}
+
 export function findEmbeddedEthereumLinkedAccount(
   linkedAccounts: LinkedAccount[] | undefined,
 ): (LinkedAccount & { type: 'wallet'; chain_type: 'ethereum'; address: string }) | null {
   if (!linkedAccounts?.length) return null;
-  return linkedAccounts.find(isEmbeddedEthereumLinkedAccount) ?? null;
+  const embeds = linkedAccounts.filter(isEmbeddedEthereumLinkedAccount);
+  if (!embeds.length) return null;
+  const hd0 = embeds.find((a) => rawEmbeddedHdIndex(a) === 0);
+  if (hd0) return hd0;
+  const notBuilder = embeds.filter((a) => rawEmbeddedHdIndex(a) !== 1);
+  if (notBuilder.length === 1) return notBuilder[0];
+  return notBuilder[0] ?? null;
+}
+
+/** Session address fallback. Never returns an HD 1 builder EOA. */
+export function firstNonBuilderEmbeddedWalletAddress(
+  wallets: Array<{ address?: string; walletIndex?: number; wallet_index?: number }> | undefined,
+): string | null {
+  if (!wallets?.length) return null;
+  const hd0 = wallets.find((w) => (w.walletIndex ?? w.wallet_index) === 0);
+  if (hd0?.address?.startsWith('0x')) return hd0.address;
+  const rest = wallets.filter((w) => (w.walletIndex ?? w.wallet_index) !== 1);
+  if (rest.length === 1 && rest[0]?.address?.startsWith('0x')) return rest[0].address;
+  return null;
 }
 
 export function findExternalEthereumLinkedAccount(
@@ -74,7 +98,8 @@ export function userHasExternalWalletOnlyLogin(
 /**
  * Resolve the trading wallet for the session.
  *
- * Email/social users: embedded EOA from `useEmbeddedEthereumWallet` (unchanged).
+ * Email/social users: embedded EOA HD index 0 (trade). HD 1 is the BuilderPad
+ * builder wallet and must not become the session address.
  * Wallet-login users: external linked account when no embedded wallet exists.
  */
 export function resolvePrimaryEthereumWallet(args: {

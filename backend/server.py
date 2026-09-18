@@ -9,7 +9,7 @@ import sys
 import logging
 from pathlib import Path
 from pydantic import BaseModel, field_validator
-from typing import List, Optional, Dict, Any, Tuple, Literal
+from typing import List, Optional, Dict, Any, Tuple, Literal, Set
 import uuid
 from datetime import datetime, timedelta, timezone, date
 from zoneinfo import ZoneInfo
@@ -66,6 +66,10 @@ import ur_relayer
 import privy_import
 import ur_statement
 import ur_onramp_permit
+import tenants as tenants_mod
+import tenant_domains as tenant_domains_mod
+import pons as pons_mod
+import twitch_helix
 
 # Configure logging — use stdout so Railway classifies levels correctly
 # (Python defaults to stderr, which Railway treats as "error" for every line)
@@ -487,6 +491,20 @@ BUILDER_ADDRESS = (
     or "0x29a1D36DaEE6B0E0Dd4873dd964677000B6e23EB"
 )
 BUILDER_FEE = int(os.getenv("BUILDER_FEE", "30") or "30")  # 30 tenths = 3 bps = 0.03 %
+
+# BuilderPad Activate: $5 (default) Arbitrum USDC to this treasury, then the
+# existing 100 USDC Bridge2 deposit. Destination is server-pinned — the client
+# cannot redirect the fee. Unset treasury → HyperTrade BUILDER_ADDRESS.
+try:
+    BUILDERPAD_ACTIVATION_FEE_USDC = float(os.getenv("BUILDERPAD_ACTIVATION_FEE_USDC", "5") or "5")
+except ValueError:
+    BUILDERPAD_ACTIVATION_FEE_USDC = 5.0
+if BUILDERPAD_ACTIVATION_FEE_USDC <= 0:
+    BUILDERPAD_ACTIVATION_FEE_USDC = 5.0
+BUILDERPAD_ACTIVATION_TREASURY = (
+    os.getenv("BUILDERPAD_ACTIVATION_TREASURY", BUILDER_ADDRESS).strip()
+    or BUILDER_ADDRESS
+)
 
 # Bridge2 (Arbitrum) configuration for gasless deposits (permit + relayer)
 ARBITRUM_USDC_ADDRESS = os.getenv("ARBITRUM_USDC_ADDRESS", "0xaf88d065e77c8cC2239327C5EDb3A432268e5831")
@@ -2041,26 +2059,39 @@ def _record_transfer(user_address: str, tx_hash: str, amount_usdc: float, destin
         # Non-fatal - transfer already succeeded
 
 
-def _wallet_transfer_with_permit_sync(req: WalletTransferRequest) -> str:
-    """Gasless USDC transfer from wallet to external address using permit + relayer."""
+def _wallet_transfer_with_permit_sync(
+    req: WalletTransferRequest,
+    *,
+    skip_intent: bool = False,
+    skip_rate_limit: bool = False,
+) -> str:
+    """Gasless USDC transfer from wallet to external address using permit + relayer.
+
+    skip_intent is only for BuilderPad activation: destination is pinned to
+    BUILDERPAD_ACTIVATION_TREASURY by the caller, so the extra TransferIntent
+    popup is not needed. The public /wallet/transfer-with-permit route never
+    sets this.
+    """
     if not _RELAYER_PRIVATE_KEYS:
         raise RuntimeError("BRIDGE2_RELAYER_PRIVATE_KEY not configured")
 
     # Rate limiting (anti-griefing) - check BEFORE doing any work
-    _check_transfer_rate_limit(req.user)
+    if not skip_rate_limit:
+        _check_transfer_rate_limit(req.user)
 
     # Replay protection (permit + intent are independent replay surfaces)
     _check_replay_protection(req.signature)
-    _check_replay_protection(req.intent_signature)
+    if not skip_intent:
+        _check_replay_protection(req.intent_signature)
 
     usd_int = int(req.usd)
     if usd_int <= 0:
         raise ValueError("usd must be > 0")
     
-    # Minimum transfer amount (anti-griefing)
-    min_amount_base = TRANSFER_MIN_AMOUNT_USDC * 1_000_000  # 5 USDC in base units
-    if usd_int < min_amount_base:
-        raise ValueError(f"Minimum transfer is {TRANSFER_MIN_AMOUNT_USDC} USDC")
+    if not skip_intent:
+        min_amount_base = TRANSFER_MIN_AMOUNT_USDC * 1_000_000  # 5 USDC in base units
+        if usd_int < min_amount_base:
+            raise ValueError(f"Minimum transfer is {TRANSFER_MIN_AMOUNT_USDC} USDC")
     
     if usd_int > (2**64 - 1):
         raise ValueError("usd too large")
@@ -2078,14 +2109,15 @@ def _wallet_transfer_with_permit_sync(req: WalletTransferRequest) -> str:
     current_time = int(time.time())
     if int(req.deadline) < current_time:
         raise ValueError(f"Transfer deadline expired: {req.deadline} < {current_time}")
-    _verify_transfer_intent_offchain(
-        owner=req.user,
-        destination=req.destination,
-        amount=usd_int,
-        deadline=int(req.deadline),
-        relayer=relayer,
-        signature=req.intent_signature,
-    )
+    if not skip_intent:
+        _verify_transfer_intent_offchain(
+            owner=req.user,
+            destination=req.destination,
+            amount=usd_int,
+            deadline=int(req.deadline),
+            relayer=relayer,
+            signature=req.intent_signature,
+        )
 
     # Check user has enough balance
     usdc_abi = [
@@ -2432,6 +2464,8 @@ async def startup():
     except Exception as e:
         logger.warning("Failed to resize default executor: %s", e)
 
+    _sync_verified_custom_hosts()
+    asyncio.create_task(asyncio.to_thread(pons_mod.warmup_quote_assets))
     logger.info("Hypertrade API started")
 
 
@@ -2814,6 +2848,2044 @@ async def get_builder_config(wallet_address: Optional[str] = None):
         "base_fee": base_fee,
         "discount": discount,
     }
+
+
+# --------------------------------------------------------------------------- #
+# BuilderPad tenants (v1) — branded apps on shared HyperTrade infra
+# Public URL: https://{slug}.builderpad.xyz  (console: https://builderpad.xyz)
+# Local / Vercel preview still serve /t/{slug}.
+# --------------------------------------------------------------------------- #
+
+
+def _tenant_allowed_catalog() -> set:
+    return tenants_mod.allowed_catalog_symbols(ASSET_METADATA, CRYPTO_METADATA)
+
+
+def _tenant_http(err: Exception) -> HTTPException:
+    if isinstance(err, tenants_mod.TenantError):
+        return HTTPException(status_code=err.status_code, detail=err.message)
+    return HTTPException(status_code=400, detail=str(err))
+
+
+async def _tenant_verified_socials(privy_user_id: str) -> Optional[Dict[str, str]]:
+    """X / Telegram / Discord handles Privy has OAuth-verified for this user.
+
+    None when PRIVY_APP_SECRET is unset (handles get dropped, never trusted).
+    Privy transport errors fail closed with a 503 so nobody can publish an
+    unverified handle by knocking the lookup over.
+    """
+    if not (os.getenv("PRIVY_APP_SECRET", "") or "").strip():
+        logger.warning("PRIVY_APP_SECRET not set — tenant socials will be dropped")
+        return None
+    try:
+        data = await asyncio.to_thread(privy_import.fetch_privy_user, privy_user_id)
+    except privy_import.PrivyImportError as e:
+        logger.warning("tenant socials: Privy lookup failed: %s", e)
+        raise HTTPException(status_code=503, detail="Could not verify socials — try again")
+    accounts = data.get("linked_accounts") or data.get("linkedAccounts") or []
+    verified = tenants_mod.privy_verified_socials(accounts)
+    if not verified.get("twitch"):
+        subject = tenants_mod.privy_twitch_subject(accounts)
+        login = await twitch_helix.login_for_user_id(http_client, subject) if subject else None
+        if login:
+            verified["twitch"] = login
+    return verified
+
+
+async def _attach_verified_twitch(rows: List[Dict[str, Any]], privy_user_id: str) -> List[Dict[str, Any]]:
+    """Fill empty socials.twitch from the current Privy login. Later-connect path.
+
+    Identity freeze still blocks changing a handle that was already published.
+    """
+    if not supabase or not privy_user_id or not rows:
+        return rows
+    need = [
+        r
+        for r in rows
+        if not tenants_mod.twitch_login(
+            (r.get("socials") or {}).get("twitch") if isinstance(r.get("socials"), dict) else ""
+        )
+    ]
+    if not need:
+        return rows
+    try:
+        verified = await _tenant_verified_socials(privy_user_id)
+    except HTTPException:
+        return rows
+    handle = (verified or {}).get("twitch") if verified else ""
+    if not tenants_mod.twitch_login(handle):
+        return rows
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        patch = tenants_mod.fill_empty_twitch(row, handle)
+        if not patch:
+            out.append(row)
+            continue
+        patch["updated_at"] = datetime.now(timezone.utc).isoformat()
+        rid = str(row.get("id") or "")
+
+        def _write(p: Dict[str, Any] = patch, tenant_id: str = rid) -> Any:
+            return (
+                supabase.table("tenants")
+                .update(p)
+                .eq("id", tenant_id)
+                .eq("privy_user_id", privy_user_id)
+                .execute()
+            )
+
+        try:
+            res = await asyncio.to_thread(_write)
+            out.append((res.data or [{**row, **patch}])[0])
+        except Exception as e:
+            logger.warning("attach twitch handle failed: %s", e)
+            out.append(row)
+    return out
+
+
+def _pair_is_own(pair: Optional[Dict[str, Any]]) -> bool:
+    """Activate = tenant_builder_wallets.status=active. `live` is a public-view field, not a column."""
+    return bool(pair and pair.get("status") == "active")
+
+
+def _sync_verified_custom_hosts() -> None:
+    """CORS allowlist = verified hostnames on *live* apps only (same as by-host)."""
+    if not supabase:
+        return
+    if not tenant_domains_mod.verified_hosts_stale() and tenant_domains_mod.cached_verified_hosts():
+        return
+    try:
+        found = (
+            supabase.table("tenants")
+            .select("custom_domain")
+            .eq("status", "live")
+            .not_.is_("custom_domain_verified_at", "null")
+            .execute()
+        )
+        tenant_domains_mod.replace_verified_hosts(
+            (r.get("custom_domain") or "") for r in (found.data or [])
+        )
+    except Exception as e:
+        logger.warning("custom domain CORS cache: %s", e)
+
+
+async def _assert_preview_live_room(
+    privy_user_id: str,
+    pair: Optional[Dict[str, Any]],
+    *,
+    exclude_id: Optional[str] = None,
+) -> None:
+    """One live preview app per user until they Activate onto their own builder."""
+    if _pair_is_own(pair):
+        return
+    if not supabase:
+        return
+    found = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .select("id, status, builder_address")
+        .eq("privy_user_id", privy_user_id)
+        .eq("status", "live")
+        .execute()
+    )
+    n = tenants_mod.count_preview_live(
+        found.data or [],
+        BUILDER_ADDRESS,
+        exclude_id=exclude_id,
+    )
+    if n >= tenants_mod.MAX_PREVIEW_LIVE_PER_USER:
+        raise HTTPException(status_code=400, detail=tenants_mod.preview_live_cap_detail())
+
+
+async def _fee_histories_by_tenant(ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+    if not supabase or not ids:
+        return {}
+    try:
+        found = await asyncio.to_thread(
+            lambda: supabase.table("tenant_builder_fee_history")
+            .select("tenant_id, from_tenths, to_tenths, changed_at")
+            .in_("tenant_id", ids)
+            .order("changed_at")
+            .execute()
+        )
+    except Exception as e:
+        logger.warning("tenant fee history read failed: %s", e)
+        return {}
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for row in found.data or []:
+        tid = str(row.get("tenant_id") or "").lower()
+        out.setdefault(tid, []).append(row)
+    return out
+
+
+async def _pledge_histories_by_tenant(
+    ids: List[str],
+) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
+    if not supabase or not ids:
+        return {}
+    try:
+        found = await asyncio.to_thread(
+            lambda: supabase.table("tenant_pledge_history")
+            .select("tenant_id, kind, from_pct, to_pct, changed_at")
+            .in_("tenant_id", ids)
+            .order("changed_at")
+            .execute()
+        )
+    except Exception as e:
+        logger.warning("tenant pledge history read failed: %s", e)
+        return {}
+    out: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+    for row in found.data or []:
+        tid = str(row.get("tenant_id") or "").lower()
+        kind = str(row.get("kind") or "")
+        if kind not in ("buyback", "burn"):
+            continue
+        packed = out.setdefault(tid, {"buyback": [], "burn": []})
+        packed[kind].append(row)
+    return out
+
+
+def _pledge_pack(
+    packed: Dict[str, Dict[str, List[Dict[str, Any]]]],
+    tenant_id: str,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    row = packed.get(tenant_id) or {}
+    return row.get("buyback") or [], row.get("burn") or []
+
+
+async def _tenant_public(
+    row: Dict[str, Any],
+    *,
+    include_owner: bool = False,
+    attribution: Optional[Dict[str, Any]] = None,
+    hl_builder: Optional[Dict[str, Any]] = None,
+    fee_history: Optional[List[Dict[str, Any]]] = None,
+    buyback_history: Optional[List[Dict[str, Any]]] = None,
+    burn_history: Optional[List[Dict[str, Any]]] = None,
+    with_creator: bool = False,
+) -> Dict[str, Any]:
+    tid = str(row.get("id") or "").lower()
+    hist = fee_history
+    bb_hist = buyback_history
+    bn_hist = burn_history
+    creator: Optional[Dict[str, Any]] = None
+    if with_creator and row.get("status") == "live":
+        creators = await _creators_by_user([row])
+        creator = creators.get(str(row.get("privy_user_id") or ""))
+    if hist is None or bb_hist is None or bn_hist is None:
+        ids = [tid] if tid else []
+        packed_fee, packed_pledge = await asyncio.gather(
+            _fee_histories_by_tenant(ids),
+            _pledge_histories_by_tenant(ids),
+        )
+        if hist is None:
+            hist = packed_fee.get(tid, [])
+        if bb_hist is None or bn_hist is None:
+            bb_pack, bn_pack = _pledge_pack(packed_pledge, tid)
+            if bb_hist is None:
+                bb_hist = bb_pack
+            if bn_hist is None:
+                bn_hist = bn_pack
+    return tenants_mod.public_view(
+        row,
+        include_owner=include_owner,
+        attribution=attribution,
+        hl_builder=hl_builder,
+        fee_history=hist,
+        buyback_history=bb_hist,
+        burn_history=bn_hist,
+        creator=creator,
+    )
+
+
+@api_router.post("/tenants")
+async def create_tenant(
+    body: tenants_mod.CreateTenantRequest,
+    auth_user: PrivyAuthUser = Depends(verify_privy_token),
+):
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    try:
+        catalog = tenants_mod.normalize_catalog(body.catalog, _tenant_allowed_catalog())
+    except tenants_mod.TenantError as e:
+        raise _tenant_http(e)
+
+    if any(getattr(body.socials, k) for k in tenants_mod.VERIFIED_SOCIAL_KEYS):
+        verified = await _tenant_verified_socials(auth_user.user_id)
+        try:
+            body.socials = tenants_mod.verify_socials(body.socials, verified)
+        except tenants_mod.TenantError as e:
+            raise _tenant_http(e)
+
+    owner_wallet = (body.owner_wallet or "").strip().lower() or None
+    if owner_wallet:
+        await _assert_caller_owns_wallet(auth_user, owner_wallet)
+    pair = await _load_builder_wallets(auth_user.user_id)
+    if pair and owner_wallet and owner_wallet == str(pair.get("builder_wallet") or "").lower():
+        raise HTTPException(
+            status_code=400,
+            detail="owner_wallet must be the trade wallet, not the builder wallet",
+        )
+
+    existing = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .select("id, status")
+        .eq("privy_user_id", auth_user.user_id)
+        .neq("status", "archived")
+        .execute()
+    )
+    rows = existing.data or []
+    draft_row = next((r for r in rows if r.get("status") == "draft"), None)
+    if body.status == "draft" and draft_row:
+        return await _upsert_tenant_draft(
+            auth_user=auth_user,
+            existing_id=str(draft_row["id"]),
+            body=body,
+            catalog=catalog,
+            owner_wallet=owner_wallet,
+            pair=pair,
+        )
+    if len(rows) >= tenants_mod.MAX_TENANTS_PER_USER:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Limit is {tenants_mod.MAX_TENANTS_PER_USER} live apps",
+        )
+
+    if body.status == "live":
+        await _assert_preview_live_room(auth_user.user_id, pair)
+
+    tenant_id = str(uuid.uuid4())
+    builder_address = BUILDER_ADDRESS
+    if pair and pair.get("status") == "active":
+        own = tenants_mod.normalize_builder_address(pair.get("builder_wallet"), "")
+        if own:
+            builder_address = own
+    row = tenants_mod.row_to_insert(
+        body=body,
+        privy_user_id=auth_user.user_id,
+        builder_address=builder_address,
+        catalog=catalog,
+    )
+    row["id"] = tenant_id
+    row["cloid_prefix"] = tenants_mod.cloid_prefix_for_tenant_id(tenant_id)
+    row["owner_wallet"] = owner_wallet
+
+    try:
+        res = await asyncio.to_thread(
+            lambda: supabase.table("tenants").insert(row).execute()
+        )
+    except Exception as e:
+        status, detail = tenants_mod.parse_supabase_error(e)
+        logger.warning("tenant create failed: %s", e)
+        raise HTTPException(status_code=status, detail=detail)
+
+    created = (res.data or [row])[0]
+    return {"tenant": await _tenant_public(created, include_owner=True)}
+
+
+async def _upsert_tenant_draft(
+    *,
+    auth_user: PrivyAuthUser,
+    existing_id: str,
+    body: tenants_mod.CreateTenantRequest,
+    catalog: List[str],
+    owner_wallet: Optional[str],
+    pair: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Replace the single unpublished wizard row. Slug stays reserved."""
+    builder_address = BUILDER_ADDRESS
+    if pair and pair.get("status") == "active":
+        own = tenants_mod.normalize_builder_address(pair.get("builder_wallet"), "")
+        if own:
+            builder_address = own
+    updates = {
+        "slug": body.slug,
+        "app_name": body.app_name,
+        "description": body.description,
+        "logo_url": body.logo_url,
+        "socials": body.socials.model_dump(),
+        "catalog": catalog,
+        "builder_address": builder_address,
+        "builder_fee_tenths": body.builder_fee_tenths,
+        "buyback_pct": body.buyback_pct,
+        "burn_pct": body.burn_pct,
+        "owner_wallet": owner_wallet,
+        "wizard_draft": tenants_mod.sanitize_wizard_draft(body.wizard_draft),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        res = await asyncio.to_thread(
+            lambda: supabase.table("tenants")
+            .update(updates)
+            .eq("id", existing_id)
+            .eq("privy_user_id", auth_user.user_id)
+            .eq("status", "draft")
+            .execute()
+        )
+    except Exception as e:
+        status, detail = tenants_mod.parse_supabase_error(e)
+        logger.warning("tenant draft upsert failed: %s", e)
+        raise HTTPException(status_code=status, detail=detail)
+    updated = (res.data or [None])[0]
+    if not updated:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    return {"tenant": await _tenant_public(updated, include_owner=True)}
+
+
+@api_router.get("/tenants")
+async def list_my_tenants(
+    auth_user: PrivyAuthUser = Depends(verify_privy_token),
+):
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    res = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .select("*")
+        .eq("privy_user_id", auth_user.user_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    rows = res.data or []
+    rows = await _attach_verified_twitch(rows, auth_user.user_id)
+    ids = [str(r["id"]) for r in rows if r.get("id")]
+    summaries = await _attribution_summaries_by_tenant(ids)
+    hl_stats = await _hl_builder_by_tenant(rows, platform_builder=BUILDER_ADDRESS)
+    hist, pledges = await asyncio.gather(
+        _fee_histories_by_tenant(ids),
+        _pledge_histories_by_tenant(ids),
+    )
+    empty = tenants_mod.summarize_attributions([])
+    return {
+        "tenants": [
+            tenants_mod.public_view(
+                row,
+                include_owner=True,
+                attribution=summaries.get(str(row.get("id") or "").lower(), empty),
+                hl_builder=hl_stats.get(str(row.get("id") or "").lower()),
+                fee_history=hist.get(str(row.get("id") or "").lower(), []),
+                buyback_history=_pledge_pack(pledges, str(row.get("id") or "").lower())[0],
+                burn_history=_pledge_pack(pledges, str(row.get("id") or "").lower())[1],
+            )
+            for row in rows
+        ]
+    }
+
+
+async def _load_builder_wallets(privy_user_id: str) -> Optional[Dict[str, Any]]:
+    if not supabase or not privy_user_id:
+        return None
+    found = await asyncio.to_thread(
+        lambda: supabase.table("tenant_builder_wallets")
+        .select("*")
+        .eq("privy_user_id", privy_user_id)
+        .limit(1)
+        .execute()
+    )
+    return (found.data or [None])[0]
+
+
+async def _creators_by_user(rows: List[Dict[str, Any]]) -> Dict[str, Optional[Dict[str, Any]]]:
+    """privy_user_id → `creator_view` over *all* that login's live apps.
+
+    `rows` may be a subset (one tenant, or a paged directory), so the siblings
+    are fetched here. One query per call, grouped in memory.
+    """
+    if not supabase:
+        return {}
+    uids = list({str(r.get("privy_user_id") or "") for r in rows if r.get("privy_user_id")})
+    if not uids:
+        return {}
+    res = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .select("id, slug, app_name, logo_url, socials, coin_symbol, privy_user_id, status, created_at")
+        .in_("privy_user_id", uids)
+        .eq("status", "live")
+        .execute()
+    )
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for r in res.data or []:
+        grouped.setdefault(str(r.get("privy_user_id") or ""), []).append(r)
+    return {uid: tenants_mod.creator_view(grouped.get(uid, [])) for uid in uids}
+
+
+@api_router.get("/tenants/directory")
+async def list_tenant_directory(
+    limit: int = Query(60, ge=1, le=100),
+):
+    """Public launchpad feed — live apps + desk attribution + HL builder lifetime."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    res = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .select("*")
+        .eq("status", "live")
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    rows = res.data or []
+    ids = [str(r["id"]) for r in rows if r.get("id")]
+    summaries = await _attribution_summaries_by_tenant(ids)
+    hl_stats = await _hl_builder_by_tenant(rows, platform_builder=BUILDER_ADDRESS)
+    hist, pledges, creators = await asyncio.gather(
+        _fee_histories_by_tenant(ids),
+        _pledge_histories_by_tenant(ids),
+        _creators_by_user(rows),
+    )
+    empty = tenants_mod.summarize_attributions([])
+    return {
+        "tenants": [
+            tenants_mod.public_view(
+                row,
+                include_owner=False,
+                attribution=summaries.get(str(row.get("id") or "").lower(), empty),
+                hl_builder=hl_stats.get(str(row.get("id") or "").lower()),
+                fee_history=hist.get(str(row.get("id") or "").lower(), []),
+                buyback_history=_pledge_pack(pledges, str(row.get("id") or "").lower())[0],
+                burn_history=_pledge_pack(pledges, str(row.get("id") or "").lower())[1],
+                creator=creators.get(str(row.get("privy_user_id") or "")),
+            )
+            for row in rows
+        ]
+    }
+
+
+@api_router.get("/tenants/me/wallets")
+async def get_my_builder_wallets(
+    auth_user: PrivyAuthUser = Depends(verify_privy_token),
+):
+    """Creator HD0 trade + HD1 builder pair. Null until provisioned."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    row = await _load_builder_wallets(auth_user.user_id)
+    return await _builder_wallets_payload(row)
+
+
+@api_router.post("/tenants/me/wallets")
+async def register_my_builder_wallets(
+    body: tenants_mod.RegisterBuilderWalletsRequest,
+    auth_user: PrivyAuthUser = Depends(verify_privy_token),
+):
+    """Persist the trade + builder pair. Builder wallet must never be unified."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    await _assert_caller_owns_wallet(auth_user, body.trade_wallet)
+    await _assert_caller_owns_wallet(auth_user, body.builder_wallet)
+    existing = await _load_builder_wallets(auth_user.user_id)
+    if existing:
+        same_trade = str(existing.get("trade_wallet") or "").lower() == body.trade_wallet
+        same_builder = str(existing.get("builder_wallet") or "").lower() == body.builder_wallet
+        if same_trade and same_builder:
+            return await _builder_wallets_payload(existing)
+        raise HTTPException(status_code=409, detail="Builder wallets are already set")
+
+    embedded: Optional[set] = None
+    external: Optional[set] = None
+    if (os.getenv("PRIVY_APP_SECRET", "") or "").strip():
+        try:
+            privy_user = await asyncio.to_thread(privy_import.fetch_privy_user, auth_user.user_id)
+            embedded, external = privy_import.classify_privy_eth_wallets(privy_user)
+        except privy_import.PrivyImportError as e:
+            logger.warning("builder wallet classify failed: %s", e)
+            raise HTTPException(status_code=502, detail="Could not verify wallets. Try again.")
+
+    imported_standard: Optional[bool] = None
+    if body.source == "imported":
+        hl = await _hl_builder_readiness(body.builder_wallet)
+        imported_standard = bool(hl.get("standard"))
+
+    try:
+        tenants_mod.assert_builder_registration(
+            body=body,
+            platform_builder=BUILDER_ADDRESS,
+            embedded=embedded,
+            external=external,
+            imported_standard=imported_standard,
+        )
+    except tenants_mod.TenantError as e:
+        raise _tenant_http(e)
+
+    payload = tenants_mod.row_to_builder_wallets_insert(
+        privy_user_id=auth_user.user_id,
+        body=body,
+    )
+    try:
+        res = await asyncio.to_thread(
+            lambda: supabase.table("tenant_builder_wallets").insert(payload).execute()
+        )
+    except Exception as e:
+        if tenants_mod.is_unique_violation(e):
+            raise HTTPException(status_code=409, detail="Builder wallet is already in use")
+        status, detail = tenants_mod.parse_supabase_error(e)
+        logger.warning("builder wallet register failed: %s", e)
+        raise HTTPException(status_code=status, detail=detail)
+    created = (res.data or [payload])[0]
+    return await _builder_wallets_payload(created)
+
+
+async def _hl_builder_readiness(builder_wallet: str) -> Dict[str, Any]:
+    addr = (builder_wallet or "").strip().lower()
+    equity = 0.0
+    mode: Optional[str] = None
+    try:
+        state = await fetch_hyperliquid("clearinghouseState", {"user": addr})
+        equity = tenants_mod.perp_equity_from_clearinghouse(state)
+    except HTTPException as e:
+        logger.warning("builder readiness clearinghouse failed: %s", e.detail)
+    try:
+        raw = await fetch_hyperliquid("userAbstraction", {"user": addr})
+        if isinstance(raw, str) and raw.strip():
+            mode = raw.strip()
+    except HTTPException as e:
+        logger.warning("builder readiness abstraction failed: %s", e.detail)
+    standard = tenants_mod.is_standard_builder_mode(mode)
+    ready = tenants_mod.builder_ready(equity, mode)
+    return {
+        "perp_equity_usd": round(equity, 8),
+        "abstraction_mode": mode,
+        "standard": standard,
+        "ready": ready,
+    }
+
+
+async def _persist_builder_funding(
+    row: Dict[str, Any],
+    hl: Dict[str, Any],
+) -> Dict[str, Any]:
+    if not supabase or not hl.get("ready"):
+        return row
+    status = row.get("status") or "provisioned"
+    if status not in ("provisioned",):
+        return row
+    now = datetime.now(timezone.utc).isoformat()
+    updated = await asyncio.to_thread(
+        lambda: supabase.table("tenant_builder_wallets")
+        .update({"status": "funded", "funded_at": now, "updated_at": now})
+        .eq("privy_user_id", row["privy_user_id"])
+        .eq("status", "provisioned")
+        .execute()
+    )
+    return (updated.data or [{**row, "status": "funded", "funded_at": now}])[0]
+
+
+async def _apply_tenants_builder_address(privy_user_id: str, builder_address: str) -> int:
+    if not supabase:
+        return 0
+    now = datetime.now(timezone.utc).isoformat()
+    res = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .update({"builder_address": builder_address, "updated_at": now})
+        .eq("privy_user_id", privy_user_id)
+        .neq("status", "archived")
+        .execute()
+    )
+    return len(res.data or [])
+
+
+async def _persist_activation_fee(row: Dict[str, Any], tx_hash: str) -> Dict[str, Any]:
+    if not supabase:
+        return row
+    if tenants_mod.builder_fee_paid(row):
+        return row
+    now = datetime.now(timezone.utc).isoformat()
+    updated = await asyncio.to_thread(
+        lambda: supabase.table("tenant_builder_wallets")
+        .update({
+            "activation_fee_tx": tx_hash,
+            "activation_fee_paid_at": now,
+            "updated_at": now,
+        })
+        .eq("privy_user_id", row["privy_user_id"])
+        .is_("activation_fee_paid_at", "null")
+        .execute()
+    )
+    return (updated.data or [{**row, "activation_fee_tx": tx_hash, "activation_fee_paid_at": now}])[0]
+
+
+async def _go_live_if_ready(row: Dict[str, Any], hl: Dict[str, Any]) -> Dict[str, Any]:
+    """Fee paid + ≥100 Standard → live=own. Safe to call on GET/sync (idempotent)."""
+    if not supabase:
+        return row
+    if (row.get("status") or "") == "active":
+        return row
+    if not tenants_mod.builder_fee_paid(row):
+        return row
+    if not hl.get("ready"):
+        return row
+    builder = str(row.get("builder_wallet") or "").lower()
+    now = datetime.now(timezone.utc).isoformat()
+    await _apply_tenants_builder_address(row["privy_user_id"], builder)
+    updated = await asyncio.to_thread(
+        lambda: supabase.table("tenant_builder_wallets")
+        .update({
+            "status": "active",
+            "funded_at": row.get("funded_at") or now,
+            "updated_at": now,
+        })
+        .eq("privy_user_id", row["privy_user_id"])
+        .execute()
+    )
+    return (updated.data or [{**row, "status": "active"}])[0]
+
+
+def _activation_fee_transfer_sync(user: str, payload: tenants_mod.UsdcPermitPayload) -> str:
+    expected = int(round(BUILDERPAD_ACTIVATION_FEE_USDC * 1_000_000))
+    if int(payload.usd) != expected:
+        raise ValueError(f"Activation fee is {BUILDERPAD_ACTIVATION_FEE_USDC:g} USDC")
+    if not Web3.is_address(BUILDERPAD_ACTIVATION_TREASURY):
+        raise RuntimeError("BUILDERPAD_ACTIVATION_TREASURY is not a valid address")
+    dummy = WalletTransferRequest(
+        user=user,
+        destination=Web3.to_checksum_address(BUILDERPAD_ACTIVATION_TREASURY),
+        usd=str(expected),
+        deadline=payload.deadline,
+        signature=payload.signature,
+        intent_signature=payload.signature,
+        signed_nonce=payload.signed_nonce,
+    )
+    return _wallet_transfer_with_permit_sync(dummy, skip_intent=True, skip_rate_limit=True)
+
+
+async def _builder_wallets_payload(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not row:
+        return {"wallets": None}
+    hl = await _hl_builder_readiness(str(row.get("builder_wallet") or ""))
+    row = await _persist_builder_funding(row, hl)
+    row = await _go_live_if_ready(row, hl)
+    return {
+        "wallets": tenants_mod.builder_wallets_public(
+            row,
+            hl=hl,
+            platform_builder=BUILDER_ADDRESS,
+            activation_fee_usdc=BUILDERPAD_ACTIVATION_FEE_USDC,
+        )
+    }
+
+
+@api_router.post("/tenants/me/wallets/sync")
+async def sync_my_builder_wallets(
+    auth_user: PrivyAuthUser = Depends(verify_privy_token),
+):
+    """Re-read HL perp equity + Standard mode on the builder wallet."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    row = await _load_builder_wallets(auth_user.user_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Builder wallets not provisioned")
+    return await _builder_wallets_payload(row)
+
+
+@api_router.post("/tenants/me/wallets/live")
+async def set_my_builder_live_mode(
+    body: tenants_mod.BuilderLiveModeRequest,
+    auth_user: PrivyAuthUser = Depends(verify_privy_token),
+):
+    """own = apps use HD1 as b. preview = shared HyperTrade builder."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    row = await _load_builder_wallets(auth_user.user_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Builder wallets not provisioned")
+    builder = str(row.get("builder_wallet") or "").lower()
+    now = datetime.now(timezone.utc).isoformat()
+    if body.live == "own":
+        if not tenants_mod.builder_fee_paid(row):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Pay the {BUILDERPAD_ACTIVATION_FEE_USDC:g} USDC BuilderPad fee "
+                    "to collect on your apps"
+                ),
+            )
+        hl = await _hl_builder_readiness(builder)
+        if not hl.get("ready"):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Builder wallet needs ≥100 USDC perp equity and Standard "
+                    "abstraction (do not unify this wallet)"
+                ),
+            )
+        await _apply_tenants_builder_address(auth_user.user_id, builder)
+        updated = await asyncio.to_thread(
+            lambda: supabase.table("tenant_builder_wallets")
+            .update({"status": "active", "funded_at": row.get("funded_at") or now, "updated_at": now})
+            .eq("privy_user_id", auth_user.user_id)
+            .execute()
+        )
+        row = (updated.data or [{**row, "status": "active"}])[0]
+        return await _builder_wallets_payload(row)
+    await _apply_tenants_builder_address(
+        auth_user.user_id,
+        tenants_mod.normalize_builder_address(BUILDER_ADDRESS, BUILDER_ADDRESS),
+    )
+    next_status = "funded" if row.get("funded_at") or row.get("status") in ("funded", "active") else "provisioned"
+    updated = await asyncio.to_thread(
+        lambda: supabase.table("tenant_builder_wallets")
+        .update({"status": next_status, "updated_at": now})
+        .eq("privy_user_id", auth_user.user_id)
+        .execute()
+    )
+    row = (updated.data or [{**row, "status": next_status}])[0]
+    await _release_user_custom_domains(auth_user.user_id)
+    return await _builder_wallets_payload(row)
+
+
+@api_router.post("/tenants/me/wallets/activate")
+async def activate_my_builder(
+    body: tenants_mod.BuilderActivateRequest,
+    auth_user: PrivyAuthUser = Depends(verify_privy_token),
+):
+    """Gasless Activate: 5 USDC fee (relayer permit) then Bridge2 100 USDC.
+
+    Sign both permits before this call so rejecting the second signature
+    charges nothing. Retry sends only what is still missing. live=own is
+    applied here or on the next sync once HL shows ≥100 + Standard.
+    """
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    row = await _load_builder_wallets(auth_user.user_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Builder wallets not provisioned")
+    builder = str(row.get("builder_wallet") or "")
+    await _assert_caller_owns_wallet(auth_user, builder)
+
+    if not tenants_mod.builder_fee_paid(row):
+        if body.fee is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Sign the {BUILDERPAD_ACTIVATION_FEE_USDC:g} USDC BuilderPad fee first",
+            )
+        try:
+            fee_tx = await asyncio.to_thread(_activation_fee_transfer_sync, builder, body.fee)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except RuntimeError as e:
+            raise HTTPException(status_code=501, detail=str(e))
+        except ContractLogicError as e:
+            logger.exception("activation fee reverted")
+            raise HTTPException(status_code=400, detail=f"Fee transfer revert: {str(e)}")
+        except Exception as e:
+            logger.exception("activation fee failed")
+            raise HTTPException(status_code=500, detail=f"Activation fee failed: {str(e)}")
+        persist_err: Optional[Exception] = None
+        for _ in range(3):
+            try:
+                row = await _persist_activation_fee(row, fee_tx)
+                persist_err = None
+                break
+            except Exception as e:
+                persist_err = e
+                logger.exception("activation fee landed (%s) but DB write failed", fee_tx)
+        if persist_err is not None:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"Fee sent ({fee_tx}) but we could not record it. "
+                    "Do not pay again — refresh and hit Check HL."
+                ),
+            )
+
+    hl = await _hl_builder_readiness(builder)
+    if body.deposit is not None and not hl.get("ready"):
+        deposit_req = Bridge2PermitDepositRequest(
+            user=builder,
+            usd=body.deposit.usd,
+            deadline=body.deposit.deadline,
+            signature=body.deposit.signature,
+        )
+        try:
+            await asyncio.to_thread(_bridge2_batched_deposit_with_permit_sync, deposit_req)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except RuntimeError as e:
+            raise HTTPException(status_code=501, detail=str(e))
+        except ContractLogicError as e:
+            logger.exception("activation deposit reverted")
+            raise HTTPException(status_code=400, detail=f"Deposit revert: {str(e)}")
+        except Exception as e:
+            logger.exception("activation deposit failed")
+            raise HTTPException(status_code=500, detail=f"Deposit failed: {str(e)}")
+
+    return await _builder_wallets_payload(row)
+
+
+@api_router.post("/tenants/me/logo")
+async def upload_tenant_logo(
+    body: tenants_mod.TenantLogoUploadRequest,
+    auth_user: PrivyAuthUser = Depends(verify_privy_token),
+):
+    """PNG / JPG / WebP only. Magic-byte sniff + Pillow re-encode, same as OrbCast avatars."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    try:
+        raw = tenants_mod.decode_logo_base64(body.image_base64)
+        cleaned = await asyncio.to_thread(tenants_mod.sanitize_logo_bytes, raw)
+        path = tenants_mod.logo_object_path(auth_user.user_id)
+        await asyncio.to_thread(tenants_mod.upload_logo_object, supabase, path, cleaned)
+    except tenants_mod.TenantError as e:
+        raise _tenant_http(e)
+    except Exception as e:
+        logger.error("tenant logo upload failed: %s", e)
+        raise HTTPException(status_code=500, detail="Could not save logo")
+    url = tenants_mod.logo_public_url(SUPABASE_URL or "", path)
+    return {"logo_url": url}
+
+
+@api_router.get("/tenants/pons/quotes")
+async def list_pons_quote_assets(refresh: bool = Query(False)):
+    """Quote assets the wizard may offer: ETH + curated Robinhood stock tokens
+    the Pons factory approves. Process-global until PONS_QUOTE_SYMBOLS changes
+    (`refresh=true` rebuilds)."""
+    quotes = await asyncio.to_thread(pons_mod.quote_assets, refresh)
+    return {
+        "chain_id": pons_mod.ROBINHOOD_CHAIN_ID,
+        "factory": pons_mod.PONS_FACTORY,
+        "launch_and_buy": pons_mod.PONS_LAUNCH_AND_BUY,
+        "fee_escrow": pons_mod.PONS_FEE_ESCROW,
+        "quotes": quotes,
+    }
+
+
+@api_router.post("/tenants/{slug}/coin")
+async def record_tenant_coin(
+    slug: str,
+    body: tenants_mod.TenantCoinRequest,
+    auth_user: PrivyAuthUser = Depends(verify_privy_token),
+):
+    """Attach a Pons v2 launch to the app. Re-reads the factory record so a
+    creator can only attach a token their own trade wallet deployed."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    try:
+        normalized = tenants_mod.normalize_slug(slug)
+    except tenants_mod.TenantError as e:
+        raise _tenant_http(e)
+    found = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .select("*")
+        .eq("slug", normalized)
+        .eq("privy_user_id", auth_user.user_id)
+        .limit(1)
+        .execute()
+    )
+    row = (found.data or [None])[0]
+    if not row:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    if row.get("coin_token"):
+        raise HTTPException(status_code=409, detail="This app already has a coin")
+    if row.get("status") != "live":
+        raise HTTPException(status_code=400, detail="Publish the app before attaching a token")
+    if body.chain_id != pons_mod.ROBINHOOD_CHAIN_ID:
+        raise HTTPException(status_code=400, detail="Only Robinhood Chain launches are supported")
+
+    # Rows saved before Privy's embedded wallet resolved have no owner_wallet.
+    # Repair from the launching wallet the browser reports (ownership-checked),
+    # else from the registered trade wallet, and persist it with the coin.
+    owner_wallet = str(row.get("owner_wallet") or "").lower()
+    backfill_owner: Optional[str] = None
+    if not owner_wallet:
+        candidate = body.owner_wallet
+        if not candidate:
+            pair = await _load_builder_wallets(auth_user.user_id)
+            candidate = str((pair or {}).get("trade_wallet") or "").lower() or None
+        if candidate:
+            await _assert_caller_owns_wallet(auth_user, candidate)
+            owner_wallet = candidate
+            backfill_owner = candidate
+
+    try:
+        rec = await asyncio.to_thread(pons_mod.verify_launch, body.token, owner_wallet)
+    except pons_mod.PonsError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
+
+    now = datetime.now(timezone.utc).isoformat()
+    updates = {
+        **({"owner_wallet": backfill_owner} if backfill_owner else {}),
+        "coin_token": rec["token"],
+        "coin_curve": rec["curve"],
+        "coin_pair_token": rec["pair_token"],
+        "coin_chain_id": body.chain_id,
+        "coin_launch_config_id": body.launch_config_id,
+        "coin_tx_hash": body.tx_hash,
+        "coin_symbol": body.symbol,
+        "coin_dev_buy_quote": body.dev_buy_quote,
+        "coin_creator_tax_bps": rec["creator_tax_bps"],
+        "coin_buyback_enabled": rec["buyback_enabled"],
+        "coin_fee_recipient": rec["creator_fee_recipient"],
+        "coin_launched_at": now,
+        "updated_at": now,
+    }
+    res = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .update(updates)
+        .eq("id", row["id"])
+        .eq("privy_user_id", auth_user.user_id)
+        .execute()
+    )
+    updated = (res.data or [{**row, **updates}])[0]
+    return {"tenant": await _tenant_public(updated, include_owner=True)}
+
+
+@api_router.post("/tenants/{slug}/coin/refresh")
+async def refresh_tenant_coin(
+    slug: str,
+    auth_user: PrivyAuthUser = Depends(verify_privy_token),
+):
+    """Re-read the factory record (buyback switch, fee recipient) into the row."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    try:
+        normalized = tenants_mod.normalize_slug(slug)
+    except tenants_mod.TenantError as e:
+        raise _tenant_http(e)
+    found = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .select("*")
+        .eq("slug", normalized)
+        .eq("privy_user_id", auth_user.user_id)
+        .limit(1)
+        .execute()
+    )
+    row = (found.data or [None])[0]
+    if not row:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    token = str(row.get("coin_token") or "")
+    if not token:
+        raise HTTPException(status_code=400, detail="This app has no token")
+    try:
+        rec = await asyncio.to_thread(
+            pons_mod.verify_launch, token, str(row.get("owner_wallet") or "")
+        )
+    except pons_mod.PonsError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
+    now = datetime.now(timezone.utc).isoformat()
+    updates = {
+        "coin_buyback_enabled": rec["buyback_enabled"],
+        "coin_fee_recipient": rec["creator_fee_recipient"],
+        "coin_creator_tax_bps": rec["creator_tax_bps"],
+        "updated_at": now,
+    }
+    res = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .update(updates)
+        .eq("id", row["id"])
+        .eq("privy_user_id", auth_user.user_id)
+        .execute()
+    )
+    updated = (res.data or [{**row, **updates}])[0]
+    return {"tenant": await _tenant_public(updated, include_owner=True)}
+
+
+async def _detach_custom_host(host: Optional[str]) -> None:
+    host = (host or "").strip().lower()
+    if not host:
+        return
+    tenant_domains_mod.forget_verified_host(host)
+    await tenant_domains_mod.vercel_detach_domain(host)
+
+
+async def _release_user_custom_domains(privy_user_id: str) -> None:
+    """Preview cannot keep a host. Drop every domain on this creator."""
+    if not supabase:
+        return
+    found = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .select("id, custom_domain")
+        .eq("privy_user_id", privy_user_id)
+        .not_.is_("custom_domain", "null")
+        .execute()
+    )
+    rows = found.data or []
+    if not rows:
+        return
+    now = datetime.now(timezone.utc).isoformat()
+    for r in rows:
+        await _detach_custom_host(r.get("custom_domain"))
+    await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .update({
+            "custom_domain": None,
+            "custom_domain_txt": None,
+            "custom_domain_verified_at": None,
+            "updated_at": now,
+        })
+        .eq("privy_user_id", privy_user_id)
+        .not_.is_("custom_domain", "null")
+        .execute()
+    )
+
+
+async def _owned_tenant_row(slug: str, privy_user_id: str) -> Dict[str, Any]:
+    try:
+        normalized = tenants_mod.normalize_slug(slug)
+    except tenants_mod.TenantError as e:
+        raise _tenant_http(e)
+    found = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .select("*")
+        .eq("slug", normalized)
+        .eq("privy_user_id", privy_user_id)
+        .limit(1)
+        .execute()
+    )
+    row = (found.data or [None])[0]
+    if not row:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return row
+
+
+async def _assert_custom_domain_gate(auth_user: PrivyAuthUser, row: Dict[str, Any]) -> None:
+    if row.get("status") != "live":
+        raise HTTPException(status_code=400, detail="Publish the app before adding a domain")
+    pair = await _load_builder_wallets(auth_user.user_id)
+    if not _pair_is_own(pair):
+        raise HTTPException(
+            status_code=400,
+            detail="Activate first. Your own domain is for builders who collect their own fees.",
+        )
+
+
+@api_router.get("/tenants/by-host")
+async def get_tenant_by_host(host: str = Query(..., min_length=3, max_length=253)):
+    """Public: hostname → live app (`{slug}.builderpad.xyz` or a creator CNAME)."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    try:
+        normalized = tenant_domains_mod.normalize_lookup_host(host)
+    except tenants_mod.TenantError:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    pad_slug = tenant_domains_mod.platform_tenant_slug(normalized)
+    if pad_slug:
+        res = await asyncio.to_thread(
+            lambda: supabase.table("tenants")
+            .select("*")
+            .eq("slug", pad_slug)
+            .eq("status", "live")
+            .limit(1)
+            .execute()
+        )
+    else:
+        res = await asyncio.to_thread(
+            lambda: supabase.table("tenants")
+            .select("*")
+            .eq("custom_domain", normalized)
+            .not_.is_("custom_domain_verified_at", "null")
+            .eq("status", "live")
+            .limit(1)
+            .execute()
+        )
+    row = (res.data or [None])[0]
+    if not row:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    summaries = await _attribution_summaries_by_tenant([str(row["id"])])
+    hl_stats = await _hl_builder_by_tenant([row], platform_builder=BUILDER_ADDRESS)
+    empty = tenants_mod.summarize_attributions([])
+    tid = str(row.get("id") or "").lower()
+    return {
+        "tenant": await _tenant_public(
+            row,
+            attribution=summaries.get(tid, empty),
+            hl_builder=hl_stats.get(tid),
+            with_creator=True,
+        )
+    }
+
+
+@api_router.post("/tenants/{slug}/domain")
+async def assign_tenant_domain(
+    slug: str,
+    body: tenant_domains_mod.AssignDomainRequest,
+    auth_user: PrivyAuthUser = Depends(verify_privy_token),
+):
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    row = await _owned_tenant_row(slug, auth_user.user_id)
+    await _assert_custom_domain_gate(auth_user, row)
+    host = body.host
+    taken = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .select("id")
+        .eq("custom_domain", host)
+        .neq("id", row["id"])
+        .limit(1)
+        .execute()
+    )
+    if taken.data:
+        raise HTTPException(status_code=400, detail="That address is already used on another app")
+    prev = (row.get("custom_domain") or "").strip().lower()
+    same = prev == host and (row.get("custom_domain_txt") or "").strip()
+    token = (row.get("custom_domain_txt") or "").strip() if same else tenant_domains_mod.new_txt_token()
+    updates: Dict[str, Any] = {
+        "custom_domain": host,
+        "custom_domain_txt": token,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if not same:
+        updates["custom_domain_verified_at"] = None
+        if prev and prev != host:
+            await _detach_custom_host(prev)
+    try:
+        res = await asyncio.to_thread(
+            lambda: supabase.table("tenants")
+            .update(updates)
+            .eq("id", row["id"])
+            .eq("privy_user_id", auth_user.user_id)
+            .execute()
+        )
+    except Exception as e:
+        msg = str(e).lower()
+        if "custom_domain" in msg or "duplicate" in msg:
+            raise HTTPException(status_code=400, detail="That address is already used on another app")
+        logger.warning("tenant domain assign failed: %s", e)
+        raise HTTPException(
+            status_code=503,
+            detail="Could not save the domain — apply builderpad_tenant_custom_domain.sql",
+        )
+    updated = (res.data or [{**row, **updates}])[0]
+    return {"tenant": await _tenant_public(updated, include_owner=True)}
+
+
+@api_router.post("/tenants/{slug}/domain/verify")
+async def verify_tenant_domain(
+    slug: str,
+    auth_user: PrivyAuthUser = Depends(verify_privy_token),
+):
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    row = await _owned_tenant_row(slug, auth_user.user_id)
+    await _assert_custom_domain_gate(auth_user, row)
+    host = (row.get("custom_domain") or "").strip().lower()
+    token = (row.get("custom_domain_txt") or "").strip()
+    if not host or not token:
+        raise HTTPException(status_code=400, detail="Add a domain first")
+    try:
+        await tenant_domains_mod.assert_dns_ready(host, token)
+        await tenant_domains_mod.vercel_attach_domain(host)
+    except tenants_mod.TenantError as e:
+        raise _tenant_http(e)
+    now = datetime.now(timezone.utc).isoformat()
+    res = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .update({
+            "custom_domain_verified_at": now,
+            "updated_at": now,
+        })
+        .eq("id", row["id"])
+        .eq("privy_user_id", auth_user.user_id)
+        .execute()
+    )
+    updated = (res.data or [{**row, "custom_domain_verified_at": now}])[0]
+    tenant_domains_mod.remember_verified_host(host)
+    logger.info(
+        "custom domain verified host=%s slug=%s — add https://%s to Privy allowed origins",
+        host,
+        row.get("slug"),
+        host,
+    )
+    return {"tenant": await _tenant_public(updated, include_owner=True)}
+
+
+@api_router.delete("/tenants/{slug}/domain")
+async def remove_tenant_domain(
+    slug: str,
+    auth_user: PrivyAuthUser = Depends(verify_privy_token),
+):
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    row = await _owned_tenant_row(slug, auth_user.user_id)
+    host = (row.get("custom_domain") or "").strip().lower()
+    if host:
+        await _detach_custom_host(host)
+    now = datetime.now(timezone.utc).isoformat()
+    res = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .update({
+            "custom_domain": None,
+            "custom_domain_txt": None,
+            "custom_domain_verified_at": None,
+            "updated_at": now,
+        })
+        .eq("id", row["id"])
+        .eq("privy_user_id", auth_user.user_id)
+        .execute()
+    )
+    updated = (res.data or [{
+        **row,
+        "custom_domain": None,
+        "custom_domain_txt": None,
+        "custom_domain_verified_at": None,
+    }])[0]
+    return {"tenant": await _tenant_public(updated, include_owner=True)}
+
+
+@api_router.delete("/tenants/{slug}")
+async def delete_tenant_draft(
+    slug: str,
+    auth_user: PrivyAuthUser = Depends(verify_privy_token),
+):
+    """Discard an unpublished wizard. Live apps archive; socials stay on the Privy login."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    row = await _owned_tenant_row(slug, auth_user.user_id)
+    if row.get("status") != "draft":
+        raise HTTPException(
+            status_code=400,
+            detail="Only a draft can be discarded. Archive a live app instead.",
+        )
+    await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .delete()
+        .eq("id", row["id"])
+        .eq("privy_user_id", auth_user.user_id)
+        .eq("status", "draft")
+        .execute()
+    )
+    return {"ok": True}
+
+
+@api_router.get("/tenants/{slug}")
+async def get_tenant(
+    slug: str,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
+):
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    try:
+        normalized = tenants_mod.normalize_slug(slug)
+    except tenants_mod.TenantError:
+        # Reserved / invalid slugs are just "not a tenant"
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    res = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .select("*")
+        .eq("slug", normalized)
+        .limit(1)
+        .execute()
+    )
+    row = (res.data or [None])[0]
+    if not row:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    owner = False
+    owner_id: Optional[str] = None
+    if credentials is not None:
+        try:
+            auth_user = await verify_privy_token(credentials)
+            owner = auth_user.user_id == row.get("privy_user_id")
+            if owner:
+                owner_id = auth_user.user_id
+        except HTTPException:
+            owner = False
+
+    if row.get("status") != "live" and not owner:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    if owner and owner_id:
+        row = (await _attach_verified_twitch([row], owner_id))[0]
+
+    summaries = await _attribution_summaries_by_tenant([str(row["id"])])
+    hl_stats = await _hl_builder_by_tenant([row], platform_builder=BUILDER_ADDRESS)
+    empty = tenants_mod.summarize_attributions([])
+    tid = str(row.get("id") or "").lower()
+    return {
+        "tenant": await _tenant_public(
+            row,
+            include_owner=owner,
+            attribution=summaries.get(tid, empty),
+            hl_builder=hl_stats.get(tid),
+            with_creator=True,
+        )
+    }
+
+
+@api_router.get("/tenants/{slug}/stream")
+async def get_tenant_stream(slug: str):
+    """Public live/offline for the desk overlay. Handle is never client-supplied."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    try:
+        normalized = tenants_mod.normalize_slug(slug)
+    except tenants_mod.TenantError:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    res = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .select("status, socials, stream_twitch")
+        .eq("slug", normalized)
+        .limit(1)
+        .execute()
+    )
+    row = (res.data or [None])[0]
+    if not row or row.get("status") != "live":
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    socials = row.get("socials") if isinstance(row.get("socials"), dict) else {}
+    channel = tenants_mod.twitch_login(socials.get("twitch"))
+    if not row.get("stream_twitch") or not channel:
+        return {
+            "enabled": False,
+            "platform": "twitch",
+            "channel": "",
+            "live": False,
+        }
+    status = await twitch_helix.stream_status(http_client, channel)
+    return {
+        "enabled": True,
+        "platform": "twitch",
+        "channel": channel,
+        **status,
+    }
+
+
+@api_router.patch("/tenants/{slug}")
+async def patch_tenant(
+    slug: str,
+    body: tenants_mod.PatchTenantRequest,
+    auth_user: PrivyAuthUser = Depends(verify_privy_token),
+):
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    try:
+        normalized = tenants_mod.normalize_slug(slug)
+    except tenants_mod.TenantError as e:
+        raise _tenant_http(e)
+
+    found = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .select("*")
+        .eq("slug", normalized)
+        .eq("privy_user_id", auth_user.user_id)
+        .limit(1)
+        .execute()
+    )
+    row = (found.data or [None])[0]
+    if not row:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    updates: Dict[str, Any] = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    payload = body.model_dump(exclude_unset=True)
+    try:
+        tenants_mod.reject_live_identity_patch(row, payload)
+    except tenants_mod.TenantError as e:
+        raise _tenant_http(e)
+    if "catalog" in payload and payload["catalog"] is not None:
+        try:
+            updates["catalog"] = tenants_mod.normalize_catalog(
+                payload["catalog"], _tenant_allowed_catalog()
+            )
+        except tenants_mod.TenantError as e:
+            raise _tenant_http(e)
+    if row.get("status") != "draft" and body.status == "draft":
+        raise HTTPException(status_code=400, detail="Only a draft can stay a draft")
+    if "slug" in payload and payload["slug"] and payload["slug"] != row.get("slug"):
+        if row.get("status") != "draft":
+            raise HTTPException(status_code=400, detail="Only a draft can change handle")
+        updates["slug"] = payload["slug"]
+    if "wizard_draft" in payload:
+        if row.get("status") != "draft" and body.status != "draft":
+            raise HTTPException(status_code=400, detail="Wizard draft is only for unpublished apps")
+        updates["wizard_draft"] = tenants_mod.sanitize_wizard_draft(payload.get("wizard_draft"))
+    pair: Optional[Dict[str, Any]] = None
+    if body.status == "live" or body.owner_wallet:
+        pair = await _load_builder_wallets(auth_user.user_id)
+    if body.owner_wallet:
+        # Set / repair the trade wallet. Never let it drift once a coin is
+        # attached — `verify_launch` proved that token against this wallet.
+        current = str(row.get("owner_wallet") or "").lower()
+        if body.owner_wallet != current:
+            if row.get("coin_token") and current:
+                raise HTTPException(
+                    status_code=400,
+                    detail="owner_wallet cannot change after a token is attached",
+                )
+            await _assert_caller_owns_wallet(auth_user, body.owner_wallet)
+            if pair and body.owner_wallet == str(pair.get("builder_wallet") or "").lower():
+                raise HTTPException(
+                    status_code=400,
+                    detail="owner_wallet must be the trade wallet, not the builder wallet",
+                )
+            updates["owner_wallet"] = body.owner_wallet
+    if body.status == "live":
+        if row.get("status") != "live":
+            await _assert_preview_live_room(
+                auth_user.user_id,
+                pair,
+                exclude_id=str(row.get("id") or ""),
+            )
+        if pair and pair.get("status") == "active":
+            own = tenants_mod.normalize_builder_address(pair.get("builder_wallet"), "")
+            if own:
+                updates["builder_address"] = own
+        updates["wizard_draft"] = None
+    for key in ("app_name", "description", "logo_url", "builder_fee_tenths", "buyback_pct", "burn_pct", "status"):
+        if key in payload and payload[key] is not None:
+            updates[key] = payload[key]
+    if "socials" in payload and payload["socials"] is not None and body.socials is not None:
+        socials = body.socials
+        if any(getattr(socials, k) for k in tenants_mod.VERIFIED_SOCIAL_KEYS):
+            verified = await _tenant_verified_socials(auth_user.user_id)
+            try:
+                socials = tenants_mod.verify_socials(socials, verified)
+            except tenants_mod.TenantError as e:
+                raise _tenant_http(e)
+        updates["socials"] = socials.model_dump()
+        # First time a Twitch handle lands on the app → desk overlay on.
+        if tenants_mod.twitch_login(socials.twitch) and not bool(row.get("stream_twitch")):
+            had = tenants_mod.twitch_login(
+                (row.get("socials") or {}).get("twitch")
+                if isinstance(row.get("socials"), dict)
+                else ""
+            )
+            if not had:
+                updates["stream_twitch"] = True
+
+    if body.stream is not None and body.stream.twitch is not None:
+        want = bool(body.stream.twitch)
+        verified_twitch = None
+        raw_socials = row.get("socials") if isinstance(row.get("socials"), dict) else {}
+        existing = tenants_mod.twitch_login(raw_socials.get("twitch"))
+        if not existing:
+            verified = await _tenant_verified_socials(auth_user.user_id)
+            verified_twitch = (verified or {}).get("twitch") if verified else None
+        try:
+            updates.update(
+                tenants_mod.apply_stream_twitch(row, want, verified_twitch)
+            )
+        except tenants_mod.TenantError as e:
+            raise _tenant_http(e)
+
+    old_fee = int(row.get("builder_fee_tenths") or tenants_mod.DEFAULT_FEE_TENTHS)
+    new_fee = updates.get("builder_fee_tenths")
+    fee_changed = (
+        (row.get("status") or "") == "live"
+        and new_fee is not None
+        and int(new_fee) != old_fee
+    )
+    old_buyback = int(row.get("buyback_pct") or 0)
+    old_burn = int(row.get("burn_pct") or 0)
+    new_buyback = updates.get("buyback_pct")
+    new_burn = updates.get("burn_pct")
+    live_now = (row.get("status") or "") == "live"
+    pledge_inserts: List[Dict[str, Any]] = []
+    if live_now and new_buyback is not None and int(new_buyback) != old_buyback:
+        pledge_inserts.append(
+            tenants_mod.pledge_history_row(str(row["id"]), "buyback", old_buyback, int(new_buyback))
+        )
+    if live_now and new_burn is not None and int(new_burn) != old_burn:
+        pledge_inserts.append(
+            tenants_mod.pledge_history_row(str(row["id"]), "burn", old_burn, int(new_burn))
+        )
+    releasing_domain = (
+        updates.get("status") == "archived"
+        and row.get("status") != "archived"
+        and (row.get("custom_domain") or "").strip()
+    )
+    if releasing_domain:
+        updates["custom_domain"] = None
+        updates["custom_domain_txt"] = None
+        updates["custom_domain_verified_at"] = None
+
+    res = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .update(updates)
+        .eq("id", row["id"])
+        .eq("privy_user_id", auth_user.user_id)
+        .execute()
+    )
+    updated = (res.data or [{**row, **updates}])[0]
+    if releasing_domain:
+        await _detach_custom_host(row.get("custom_domain"))
+    if fee_changed:
+        try:
+            await asyncio.to_thread(
+                lambda: supabase.table("tenant_builder_fee_history")
+                .insert(tenants_mod.fee_history_row(str(row["id"]), old_fee, int(new_fee)))
+                .execute()
+            )
+        except Exception as e:
+            logger.warning("tenant fee history insert failed: %s", e)
+            raise HTTPException(
+                status_code=503,
+                detail="Fee saved but the change log did not write — apply builderpad_tenant_fee_history.sql",
+            )
+    if pledge_inserts:
+        try:
+            await asyncio.to_thread(
+                lambda: supabase.table("tenant_pledge_history").insert(pledge_inserts).execute()
+            )
+        except Exception as e:
+            logger.warning("tenant pledge history insert failed: %s", e)
+            raise HTTPException(
+                status_code=503,
+                detail="Pledge saved but the change log did not write — apply builderpad_tenant_pledge.sql",
+            )
+    return {"tenant": await _tenant_public(updated, include_owner=True)}
+
+
+@api_router.post("/tenants/{slug}/orders")
+async def record_tenant_order(
+    slug: str,
+    body: tenants_mod.TenantOrderAttributionRequest,
+    auth_user: PrivyAuthUser = Depends(verify_privy_token),
+):
+    """Log an order this client placed so volume is (wallet, cloid/oid)."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    try:
+        normalized = tenants_mod.normalize_slug(slug)
+    except tenants_mod.TenantError as e:
+        raise _tenant_http(e)
+
+    await _assert_caller_owns_wallet(auth_user, body.wallet_address)
+
+    found = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .select("id, cloid_prefix, status, builder_fee_tenths, builder_address")
+        .eq("slug", normalized)
+        .limit(1)
+        .execute()
+    )
+    tenant = (found.data or [None])[0]
+    if not tenant or tenant.get("status") != "live":
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    prefix = str(tenant.get("cloid_prefix") or "").lower()
+    if not prefix or not body.cloid.startswith(prefix):
+        raise HTTPException(status_code=400, detail="cloid does not match this app")
+
+    tenths = int(tenant.get("builder_fee_tenths") or 0)
+    notional = body.notional_usd
+    est_fee = None
+    if notional is not None:
+        # tenths of a bps: 50 = 5 bps = 0.05% = notional * 50 / 100000
+        est_fee = round(notional * tenths / 100_000.0, 8)
+    builder_address = tenants_mod.normalize_builder_address(
+        tenant.get("builder_address"), BUILDER_ADDRESS
+    )
+
+    payload = {
+        "tenant_id": tenant["id"],
+        "privy_user_id": auth_user.user_id,
+        "wallet_address": body.wallet_address,
+        "cloid": body.cloid,
+        "oid": body.oid,
+        "symbol": body.symbol,
+        "builder_address": builder_address,
+        "notional_usd": notional,
+        "builder_fee_tenths": tenths,
+        "est_builder_fee_usd": est_fee,
+        "side": body.side,
+        "reduce_only": bool(body.reduce_only) if body.reduce_only is not None else None,
+    }
+    try:
+        await asyncio.to_thread(
+            lambda: supabase.table("tenant_order_attributions").insert(payload).execute()
+        )
+    except Exception as e:
+        if tenants_mod.is_unique_violation(e):
+            if body.oid and body.wallet_address:
+                try:
+                    await _settle_tenant_attributions(
+                        tenant_id=str(tenant["id"]),
+                        wallets=[body.wallet_address],
+                    )
+                except Exception as settle_err:
+                    logger.warning("tenant order settle after dedupe failed: %s", settle_err)
+            return {"ok": True, "deduped": True}
+        logger.warning("tenant order attribution failed: %s", e)
+        raise HTTPException(status_code=500, detail="Could not record order")
+    if body.oid and body.wallet_address:
+        try:
+            await _settle_tenant_attributions(
+                tenant_id=str(tenant["id"]),
+                wallets=[body.wallet_address],
+            )
+        except Exception as e:
+            logger.warning("tenant order settle after record failed: %s", e)
+    return {"ok": True}
+
+
+_TENANT_SETTLE_MAX_WALLETS = 8
+
+
+def _tenant_row_created_ms(row: Dict[str, Any]) -> Optional[int]:
+    raw = row.get("created_at")
+    if not raw:
+        return None
+    try:
+        if isinstance(raw, (int, float)):
+            n = int(raw)
+            return n if n > 10_000_000_000 else n * 1000
+        text = str(raw).replace("Z", "+00:00")
+        dt = datetime.fromisoformat(text)
+        return int(dt.timestamp() * 1000)
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+async def _hl_user_fills_for_wallet(wallet: str, start_ms: Optional[int]) -> List[Any]:
+    """Prefer userFills; fill gaps with userFillsByTime. Dedup by tid/oid+time."""
+    wallet = (wallet or "").lower()
+    chunks: List[Any] = []
+    try:
+        data = await fetch_hyperliquid("userFills", {"user": wallet})
+        if isinstance(data, list):
+            chunks.append(data)
+    except HTTPException as e:
+        logger.warning("tenant settle userFills failed: %s", e.detail)
+    if start_ms:
+        try:
+            extra = await fetch_hyperliquid(
+                "userFillsByTime",
+                {"user": wallet, "startTime": int(start_ms)},
+            )
+            if isinstance(extra, list):
+                chunks.append(extra)
+        except HTTPException as e:
+            logger.warning("tenant settle userFillsByTime failed: %s", e.detail)
+
+    seen: Set[str] = set()
+    out: List[Any] = []
+    for group in chunks:
+        for fill in group:
+            if not isinstance(fill, dict):
+                continue
+            tid = fill.get("tid")
+            key = (
+                f"t:{tid}"
+                if tid is not None
+                else f"o:{fill.get('oid')}:{fill.get('time')}:{fill.get('sz')}"
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(fill)
+    return out
+
+
+async def _settle_tenant_attributions(
+    *,
+    tenant_id: str,
+    wallets: Optional[List[str]] = None,
+) -> int:
+    """Join HL userFills.builderFee onto attribution rows as (wallet, oid)."""
+    if not supabase:
+        return 0
+    found = await asyncio.to_thread(
+        lambda: supabase.table("tenant_order_attributions")
+        .select("id, wallet_address, oid, created_at")
+        .eq("tenant_id", tenant_id)
+        .not_.is_("oid", "null")
+        .execute()
+    )
+    rows = found.data or []
+    if not rows:
+        return 0
+    wanted = {w.lower() for w in (wallets or []) if w}
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for row in rows:
+        w = str(row.get("wallet_address") or "").lower()
+        if not w.startswith("0x"):
+            continue
+        if wanted and w not in wanted:
+            continue
+        grouped.setdefault(w, []).append(row)
+    updated = 0
+    for wallet in list(grouped.keys())[:_TENANT_SETTLE_MAX_WALLETS]:
+        starts = [_tenant_row_created_ms(r) for r in grouped[wallet]]
+        start_ms = min((s for s in starts if s), default=None)
+        if start_ms:
+            start_ms = max(0, start_ms - 60_000)
+        fills = await _hl_user_fills_for_wallet(wallet, start_ms)
+        by_oid = tenants_mod.aggregate_user_fills_by_oid(fills)
+        if not by_oid:
+            continue
+        for row in grouped[wallet]:
+            try:
+                oid = int(row.get("oid") or 0)
+            except (TypeError, ValueError):
+                continue
+            agg = by_oid.get(oid)
+            if not agg:
+                continue
+            await asyncio.to_thread(
+                lambda r=row, a=agg: supabase.table("tenant_order_attributions")
+                .update(tenants_mod.settlement_patch(a))
+                .eq("id", r["id"])
+                .eq("wallet_address", wallet)
+                .eq("oid", oid)
+                .execute()
+            )
+            updated += 1
+    return updated
+
+
+_hl_builder_cache: Dict[str, Tuple[float, Optional[Dict[str, Any]]]] = {}
+_HL_BUILDER_TTL = 300.0
+
+
+async def _active_own_builders(privy_ids: List[str]) -> Dict[str, str]:
+    """privy_user_id → claimed builder wallet (imported or HD 1).
+
+    Preview apps only match if that claimed wallet is already the tenant `b`
+    (imported platform builder). Shared-preview apps on HyperTrade `b` stay at 0.
+    """
+    if not supabase or not privy_ids:
+        return {}
+    ids = list({p for p in privy_ids if p})
+    if not ids:
+        return {}
+    res = await asyncio.to_thread(
+        lambda: supabase.table("tenant_builder_wallets")
+        .select("privy_user_id, builder_wallet, status")
+        .in_("privy_user_id", ids)
+        .execute()
+    )
+    out: Dict[str, str] = {}
+    for row in res.data or []:
+        addr = tenants_mod.normalize_builder_address(row.get("builder_wallet"), "")
+        uid = str(row.get("privy_user_id") or "")
+        if addr and uid:
+            out[uid] = addr
+    return out
+
+
+async def _referral_builder_rewards(builder: str) -> Optional[Dict[str, Any]]:
+    addr = tenants_mod.normalize_builder_address(builder, "")
+    if not addr:
+        return None
+    now = time.time()
+    hit = _hl_builder_cache.get(addr)
+    if hit and now - hit[0] < _HL_BUILDER_TTL:
+        return hit[1]
+    try:
+        raw = await fetch_hyperliquid("referral", {"user": addr})
+    except HTTPException as e:
+        logger.warning("HL referral builder stats failed for %s: %s", addr, e.detail)
+        raw = None
+    _hl_builder_cache[addr] = (now, raw if isinstance(raw, dict) else None)
+    return _hl_builder_cache[addr][1]
+
+
+async def _hl_builder_by_tenant(
+    rows: List[Dict[str, Any]],
+    *,
+    platform_builder: str,
+) -> Dict[str, Optional[Dict[str, Any]]]:
+    """Lifetime HL builder stats when the tenant `b` is that creator's claimed wallet.
+
+    Preview apps on shared HyperTrade `b` stay at 0 unless this creator imported
+    that same address (they already earned those fees). Do not copy platform
+    volume onto other preview apps.
+
+    HL only knows the builder *address*. When one creator runs several live apps
+    on the same `b`, the lifetime number is apportioned by each app's
+    desk-attributed fills (`tenant_order_attributions.filled_notional_usd`), so
+    a brand-new app does not inherit its siblings' history. A lone app keeps
+    100 %. If no app has desk fills yet, the oldest live app carries it.
+    """
+    own = await _active_own_builders(
+        [str(r.get("privy_user_id") or "") for r in rows]
+    )
+    want: Dict[str, int] = {}
+    platform = tenants_mod.normalize_builder_address(platform_builder, "")
+    for row in rows:
+        uid = str(row.get("privy_user_id") or "")
+        claimed = own.get(uid)
+        tenant_b = tenants_mod.normalize_builder_address(row.get("builder_address"), "")
+        if not claimed or not tenant_b or claimed != tenant_b:
+            continue
+        tenths = int(row.get("builder_fee_tenths") or tenants_mod.DEFAULT_FEE_TENTHS)
+        if tenant_b == platform:
+            tenths = 30
+        want[tenant_b] = tenths
+    fetched: Dict[str, Optional[Dict[str, Any]]] = {}
+    shares: Dict[str, float] = {}
+    siblings_of: Dict[str, int] = {}
+    if want:
+        results = await asyncio.gather(
+            *[_referral_builder_rewards(addr) for addr in want],
+            return_exceptions=True,
+        )
+        for addr, raw in zip(want.keys(), results):
+            if isinstance(raw, Exception):
+                logger.warning("HL builder stats %s: %s", addr, raw)
+                fetched[addr] = None
+            else:
+                fetched[addr] = tenants_mod.hl_builder_from_referral(
+                    raw, fee_tenths=want[addr]
+                )
+        shares, siblings_of = await _builder_shares_by_tenant(list(want.keys()))
+    out: Dict[str, Optional[Dict[str, Any]]] = {}
+    for row in rows:
+        tid = str(row.get("id") or "").lower()
+        uid = str(row.get("privy_user_id") or "")
+        claimed = own.get(uid)
+        tenant_b = tenants_mod.normalize_builder_address(row.get("builder_address"), "")
+        stats = fetched.get(tenant_b) if claimed and claimed == tenant_b else None
+        if stats is None:
+            out[tid] = None
+            continue
+        n = siblings_of.get(tenant_b, 1)
+        if n <= 1:
+            out[tid] = stats
+            continue
+        share = shares.get(tid, 0.0)
+        out[tid] = {
+            **stats,
+            "fee_usd": round(float(stats.get("fee_usd") or 0) * share, 4),
+            "filled_notional_usd": round(float(stats.get("filled_notional_usd") or 0) * share, 2),
+            "share": round(share, 4),
+            "shared_builder_apps": n,
+        }
+    return out
+
+
+async def _builder_shares_by_tenant(
+    builders: List[str],
+) -> Tuple[Dict[str, float], Dict[str, int]]:
+    """tenant_id → share of its builder's lifetime; builder → live app count.
+
+    Share = this app's desk-attributed `filled_notional_usd` over the sum across
+    every live app on the same builder address. All-zero → oldest app gets 1.0.
+    """
+    if not supabase or not builders:
+        return {}, {}
+    res = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .select("id, builder_address, created_at")
+        .in_("builder_address", builders)
+        .eq("status", "live")
+        .execute()
+    )
+    by_builder: Dict[str, List[Dict[str, Any]]] = {}
+    for t in res.data or []:
+        b = tenants_mod.normalize_builder_address(t.get("builder_address"), "")
+        if b:
+            by_builder.setdefault(b, []).append(t)
+    counts = {b: len(ts) for b, ts in by_builder.items()}
+    multi = [t for ts in by_builder.values() if len(ts) > 1 for t in ts]
+    if not multi:
+        return {}, counts
+    ids = [str(t["id"]).lower() for t in multi]
+    filled = await asyncio.to_thread(
+        lambda: supabase.table("tenant_order_attributions")
+        .select("tenant_id, filled_notional_usd")
+        .in_("tenant_id", ids)
+        .execute()
+    )
+    desk: Dict[str, float] = {}
+    for r in filled.data or []:
+        tid = str(r.get("tenant_id") or "").lower()
+        try:
+            desk[tid] = desk.get(tid, 0.0) + float(r.get("filled_notional_usd") or 0)
+        except (TypeError, ValueError):
+            continue
+    shares: Dict[str, float] = {}
+    for ts in by_builder.values():
+        if len(ts) <= 1:
+            continue
+        total = sum(desk.get(str(t["id"]).lower(), 0.0) for t in ts)
+        if total > 0:
+            for t in ts:
+                tid = str(t["id"]).lower()
+                shares[tid] = desk.get(tid, 0.0) / total
+        else:
+            oldest = min(ts, key=lambda t: str(t.get("created_at") or ""))
+            for t in ts:
+                shares[str(t["id"]).lower()] = 1.0 if t is oldest else 0.0
+    return shares, counts
+
+
+async def _attribution_summaries_by_tenant(tenant_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    if not supabase or not tenant_ids:
+        return {}
+    res = await asyncio.to_thread(
+        lambda: supabase.table("tenant_order_attributions")
+        .select(
+            "tenant_id, est_builder_fee_usd, settled_builder_fee_usd, filled_notional_usd"
+        )
+        .in_("tenant_id", tenant_ids)
+        .execute()
+    )
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for row in res.data or []:
+        grouped.setdefault(str(row.get("tenant_id") or "").lower(), []).append(row)
+    return {
+        tid: tenants_mod.summarize_attributions(rows)
+        for tid, rows in grouped.items()
+    }
+
+
+@api_router.get("/tenants/{slug}/orders")
+async def list_tenant_orders(
+    slug: str,
+    settle: bool = False,
+    auth_user: PrivyAuthUser = Depends(verify_privy_token),
+):
+    """Owner-only. Attributions for this app; optional HL fill settlement."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    try:
+        normalized = tenants_mod.normalize_slug(slug)
+    except tenants_mod.TenantError as e:
+        raise _tenant_http(e)
+    found = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .select("id, privy_user_id")
+        .eq("slug", normalized)
+        .eq("privy_user_id", auth_user.user_id)
+        .limit(1)
+        .execute()
+    )
+    tenant = (found.data or [None])[0]
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    if settle:
+        try:
+            await _settle_tenant_attributions(tenant_id=str(tenant["id"]))
+        except Exception as e:
+            logger.warning("tenant settle on list failed: %s", e)
+    rows = await asyncio.to_thread(
+        lambda: supabase.table("tenant_order_attributions")
+        .select("*")
+        .eq("tenant_id", tenant["id"])
+        .order("created_at", desc=True)
+        .limit(200)
+        .execute()
+    )
+    data = rows.data or []
+    return {
+        "orders": [tenants_mod.attribution_public(r) for r in data],
+        "summary": tenants_mod.summarize_attributions(data),
+    }
+
+
+@api_router.post("/tenants/{slug}/orders/settle")
+async def settle_tenant_orders(
+    slug: str,
+    auth_user: PrivyAuthUser = Depends(verify_privy_token),
+):
+    """Owner-only. Re-read HL userFills and persist builderFee on (wallet, oid)."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    try:
+        normalized = tenants_mod.normalize_slug(slug)
+    except tenants_mod.TenantError as e:
+        raise _tenant_http(e)
+    found = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .select("id, privy_user_id")
+        .eq("slug", normalized)
+        .eq("privy_user_id", auth_user.user_id)
+        .limit(1)
+        .execute()
+    )
+    tenant = (found.data or [None])[0]
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    updated = await _settle_tenant_attributions(tenant_id=str(tenant["id"]))
+    return {"ok": True, "updated": updated}
 
 
 # --------------------------------------------------------------------------- #
@@ -18591,7 +20663,13 @@ async def geo_block_middleware(request: Request, call_next):
 
 
 # CORS: Restrict to known origins (mobile apps bypass CORS entirely)
+# BuilderPad console is builderpad.xyz / www. Tenant apps are `{slug}.builderpad.xyz`
+# (wildcard matcher below) plus verified creator CNAMEs. HyperTrade marketing stays
+# listed because it shares this API. Auth is Privy Bearer — not cookies.
+# Each host still needs Privy allowed origins (dashboard; wildcard OK for subdomains).
 ALLOWED_ORIGINS = [
+    "https://builderpad.xyz",
+    "https://www.builderpad.xyz",
     "https://hypertrade.exchange",
     "https://www.hypertrade.exchange",
     "https://app.hypertrade.exchange",
@@ -18600,7 +20678,21 @@ ALLOWED_ORIGINS = [
     # Showcase local / static hosts
     "http://localhost:5174",
     "http://127.0.0.1:5174",
+    # BuilderPad Vite console (web/)
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
 ]
+
+
+class BuilderPadCORS(CORSMiddleware):
+    def is_allowed_origin(self, origin: str) -> bool:
+        if super().is_allowed_origin(origin):
+            return True
+        if tenant_domains_mod.origin_is_platform_wildcard(origin):
+            return True
+        _sync_verified_custom_hosts()
+        return tenant_domains_mod.origin_is_verified_custom(origin)
+
 
 # In development, also allow localhost
 if os.getenv("ENVIRONMENT", "production") != "production":
@@ -18612,7 +20704,7 @@ if os.getenv("ENVIRONMENT", "production") != "production":
     ])
 
 app.add_middleware(
-    CORSMiddleware,
+    BuilderPadCORS,
     allow_credentials=True,
     allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],

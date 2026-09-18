@@ -55,6 +55,8 @@ import {
   getExternalWalletSignerAddress,
 } from '../lib/externalWalletConnect';
 import {
+  findEmbeddedEthereumLinkedAccount,
+  firstNonBuilderEmbeddedWalletAddress,
   resolvePrimaryEthereumWallet,
   userHasExternalWalletOnlyLogin,
 } from '../lib/walletAccounts';
@@ -291,8 +293,9 @@ export function PrivyAuthProvider({ children }: { children: ReactNode }) {
       // Server import may land before the Expo SDK refreshes linked wallets.
       return urTestWalletAddress;
     }
+    const tradeEmbedded = findEmbeddedEthereumLinkedAccount(privyUser?.linked_accounts);
     const primary = resolvePrimaryEthereumWallet({
-      embeddedAddress: wallets?.[0]?.address,
+      embeddedAddress: tradeEmbedded?.address ?? firstNonBuilderEmbeddedWalletAddress(wallets),
       linkedAccounts: privyUser?.linked_accounts,
     });
     return primary?.address ?? null;
@@ -300,8 +303,9 @@ export function PrivyAuthProvider({ children }: { children: ReactNode }) {
 
   const isExternalWalletUser = useMemo(() => {
     if (urTestWalletAddress && isUrTestWalletImportEnabled) return false;
+    const tradeEmbedded = findEmbeddedEthereumLinkedAccount(privyUser?.linked_accounts);
     const primary = resolvePrimaryEthereumWallet({
-      embeddedAddress: wallets?.[0]?.address,
+      embeddedAddress: tradeEmbedded?.address ?? firstNonBuilderEmbeddedWalletAddress(wallets),
       linkedAccounts: privyUser?.linked_accounts,
     });
     return primary?.kind === 'external';

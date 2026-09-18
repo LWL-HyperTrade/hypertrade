@@ -2,6 +2,7 @@
 
 What is **shipped** in this reference app vs what we plan next.  
 Tiers: **1 = Core HL** · **2 = AI agents** · **3 = Neobank / UR banking**.  
+**BuilderPad** is a separate optional **web** product in this repo (`web/` → [builderpad.xyz](https://builderpad.xyz)), not a fourth mobile tier.  
 Fork guides: [FORKING.md](./FORKING.md).
 
 ---
@@ -17,6 +18,15 @@ Fork guides: [FORKING.md](./FORKING.md).
 - FastAPI + Supabase (alerts, push tokens, rewards, deposit scan)
 - Demo / HL testnet mode for review & onboarding
 - Multi-locale UI (11 languages)
+
+### BuilderPad (optional web product)
+
+Shipped. Not a mobile-tier item and not “just a Pons fork.”
+
+- Vite console in `web/`, deployed on **Vercel** as **[builderpad.xyz](https://builderpad.xyz)**
+- Creators publish **branded Hyperliquid trading apps** at `{slug}.builderpad.xyz` (same FastAPI / Privy / Bridge2 stack as HyperTrade; own-builder activation)
+- Optional **coin chapter**: Pons v2 factory fork in `contracts/pons-v2/` (Robinhood Chain 4663). Skip the contracts if you only want the HL web desk
+- Product spec: [BUILDERPAD.md](./BUILDERPAD.md). Contract/deploy spec: [PONS_FORK.md](./PONS_FORK.md)
 
 ### Tier 2 — AI agents (optional)
 
@@ -46,8 +56,7 @@ Clear next builds — not committed dates.
 | 2 | **AI portfolio awareness (multi-symbol)** | Agents manage **multiple symbols at once** with portfolio-level awareness: conviction budget across assets, correlation / shared-beta checks, opportunity cost (“best use of capital”). Replaces today’s one-symbol cap |
 | 3 | **HL advanced order types** | Support Hyperliquid **TWAP** and **Scale** (and similar) order types in the mobile trading UX + signing path |
 | 4 | **Order-related push notifications** | Push when orders fill, cancel, reject, or otherwise change state (beyond today’s price / system alerts) |
-| 5 | **Web trading UI** | Browser app for the same HL flows (trade, portfolio, deposits) — complements the mobile-native app; same backend / builder fee / Privy patterns where possible |
-| 6 | **Codebase audit** | Third-party (or structured internal) security review of backend, relayers, wallet/signing paths, and optional UR / AI modules before wider production reliance |
+| 5 | **Codebase audit** | Third-party (or structured internal) security review of backend, relayers, wallet/signing paths, and optional UR / AI / BuilderPad modules before wider production reliance |
 
 ---
 

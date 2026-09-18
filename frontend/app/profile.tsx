@@ -1408,6 +1408,16 @@ export default function ProfileScreen() {
             <Ionicons name="chevron-forward" size={20} color={colors.text.tertiary} />
           </TouchableOpacity>
 
+          <TouchableOpacity style={styles.menuItem} onPress={() => safePush('/t' as Href)}>
+            <View style={styles.menuItemLeft}>
+              <View style={[styles.menuIcon, { backgroundColor: `${colors.accent.gold}20` }]}>
+                <Ionicons name="apps" size={18} color={colors.accent.gold} />
+              </View>
+              <Text style={styles.menuItemText}>Trading apps</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color={colors.text.tertiary} />
+          </TouchableOpacity>
+
           <TouchableOpacity style={styles.menuItem} onPress={() => safePush('/fees')}>
             <View style={styles.menuItemLeft}>
               <View style={[styles.menuIcon, { backgroundColor: `${colors.text.tertiary}20` }]}>

@@ -50,6 +50,7 @@ import { initAppsFlyerSdk } from '../src/lib/appsFlyerAnalytics';
 import { RootToastHost } from '../src/components/ToastHost';
 import { AppKitHost } from '../src/components/AppKitHost';
 import { appKit } from '../src/lib/appKitConfig';
+import { TenantProvider } from '../src/tenants';
 
 // Syncs builder config from React context to global singleton (for non-React code like order signing)
 // Also refreshes with wallet address when user authenticates (for personalized fee discount).
@@ -202,7 +203,7 @@ function AppContent() {
   }, [pathname]);
   
   return (
-    <>
+    <TenantProvider>
       <StatusBar style="light" backgroundColor={colors.background.primary} />
       <ClaimBannerRoot>
         <Stack
@@ -255,7 +256,7 @@ function AppContent() {
       <AppUpdateBanner />
       <BottomNavBar />
       {/*{__DEV__ && <ApiCounterOverlay />}*/}
-    </>
+    </TenantProvider>
   );
 }
 

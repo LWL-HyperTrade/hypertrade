@@ -10,6 +10,7 @@ import {
 } from './hip3Fees';
 import { enabledHip3Dexes } from './hip3Dexes';
 import { getGlobalBuilderFee } from '../providers/BuilderConfigProvider';
+import { extractHlOid, nextTenantOrderTag, reportTenantOrder } from '../tenants/orderBridge';
 import {
   getHlInfoUrl,
   getHlExchangeSignatureChainId,
@@ -3740,6 +3741,8 @@ export type PlaceOrderInput = {
    * stays inside that book (Main collateral never moves).
    */
   vaultAddress?: Hex;
+  /** Client order id. Tenant skins stamp one when omitted. */
+  cloid?: string | null;
 };
 
 /**
@@ -4205,6 +4208,9 @@ export async function placeOrder(input: PlaceOrderInput) {
   // so we can decide later whether the bottleneck is signing (fixable by
   // swapping to native crypto) or network (fixable by warmup or location).
   // No effect on production: __DEV__ is statically false in release builds.
+  const tenantTag = input.cloid ? null : await nextTenantOrderTag();
+  const orderCloid = input.cloid ?? tenantTag?.cloid ?? undefined;
+
   const orderStart = __DEV__ ? Date.now() : 0;
   try {
     const result = await exchange.order({
@@ -4224,11 +4230,20 @@ export async function placeOrder(input: PlaceOrderInput) {
                 },
               }
             : { limit: { tif } },
+          ...(orderCloid ? { c: orderCloid } : {}),
         },
       ],
       grouping: 'na',
       builder: buildBuilder,
     });
+    if (tenantTag) {
+      reportTenantOrder({
+        ...tenantTag,
+        oid: extractHlOid(result),
+        symbol: input.symbol,
+        walletAddress: input.userAddress ?? null,
+      });
+    }
     if (__DEV__) {
       console.log('[HLOrderLatency]', {
         symbol: input.symbol,
@@ -4268,6 +4283,7 @@ export async function placeSpotOrder(input: {
   slippageBps?: number;
   /** Trade as HL sub-account (device-agent + defaultVaultAddress). */
   vaultAddress?: Hex;
+  cloid?: string | null;
 }) {
   const spotSymbol = await resolveSpotSymbol(input.symbol);
   const { assetId, szDecimals, pxDecimals } = await getSpotAssetIdAndMeta(spotSymbol);
@@ -4391,6 +4407,9 @@ export async function placeSpotOrder(input: {
     console.log('[placeSpotOrder] submitting', orderPayload);
   }
 
+  const tenantTag = input.cloid ? null : await nextTenantOrderTag();
+  const orderCloid = input.cloid ?? tenantTag?.cloid ?? undefined;
+
   const result = await exchange.order({
     orders: [
       {
@@ -4400,11 +4419,20 @@ export async function placeSpotOrder(input: {
         s: sizeUnits,
         r: false,
         t: { limit: { tif } },
+        ...(orderCloid ? { c: orderCloid } : {}),
       },
     ],
     grouping: 'na',
     builder: { b: getBuilderAddress(), f: getSpotBuilderFeeTenthsBps() },
   });
+  if (tenantTag) {
+    reportTenantOrder({
+      ...tenantTag,
+      oid: extractHlOid(result),
+      symbol: spotSymbol,
+      walletAddress: null,
+    });
+  }
   if (__DEV__) {
     console.log('[placeSpotOrder] result', { spotSymbol, result });
   }

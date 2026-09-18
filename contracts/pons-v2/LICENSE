@@ -1,0 +1,60 @@
+contracts/pons-v2 — licence map
+
+Our code (MIT)
+--------------
+Files under src/ named BuilderPad*.sol, script/, test/ and this project's
+configuration are released under the MIT License (see the repository root
+LICENSE). Copyright (c) 2026 BuilderPad contributors.
+
+Forked code (MIT) — Pons v2
+---------------------------
+Most of src/ is an identifier-only rename (PonsV2* -> BuilderPad*) of the
+Pons v2 launchpad contracts by Pons, https://github.com/ponsdotdev/ponsfamily
+(contractsV2/src/v2 @ 79e99efd9d4fab7138b1a5524b907b2f5aae6586, overlaid with
+the Blockscout-verified sources of the live deployment). Every such file
+carries its original `SPDX-License-Identifier: MIT` header. BuilderPadFeeEscrow.sol
+is ours (upstream ships only the interface). See UPSTREAM.txt for the exact
+provenance and docs/PONS_FORK.md for what changed. This fork is not affiliated
+with or endorsed by Pons.
+
+  MIT License — Copyright (c) Pons (ponsdotdev)
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in
+  all copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+
+Vendored third-party code (lib/)
+--------------------------------
+  lib/openzeppelin-contracts   MIT            OpenZeppelin
+  lib/forge-std                MIT / Apache-2 Foundry
+  lib/v4-periphery             MIT            Uniswap Labs (interfaces + libraries only)
+  lib/v4-hooks-public          MIT            Uniswap Labs (BaseHook)
+  lib/v4-core                  MIT            Uniswap Labs — interfaces, types and
+                                              libraries, EXCEPT:
+    lib/v4-core/src/libraries/Pool.sol       BUSL-1.1
+    lib/v4-core/src/libraries/Position.sol   BUSL-1.1
+
+The two BUSL-1.1 files are Uniswap v4 core math libraries (Change Date
+2027-06-15, Change License GPL-2.0-or-later) and are linked into
+BuilderPadGraduationGuard / BuilderPadMemeHook exactly as upstream Pons v2
+does. They are redistributed here unmodified under the terms of the Business
+Source License 1.1; see the licence text at
+https://github.com/Uniswap/v4-core/blob/main/licenses/BUSL_LICENSE and the
+Additional Use Grant at v4-core-license-grants.uniswap.eth. Production use of
+those two files is subject to that licence, not to MIT. The deployed pools
+themselves run on Uniswap's official PoolManager on Robinhood Chain; nothing
+from v4-core is redeployed by this project.

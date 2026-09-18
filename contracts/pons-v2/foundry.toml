@@ -1,0 +1,62 @@
+# Pons v2 fork — Robinhood Chain (4663).
+# Compiler settings match the Blockscout-verified live deployment
+# (PonsV2LaunchAndBuy 0xe33E…2948): solc 0.8.35, cancun, optimizer 200, via-IR.
+
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+script = "script"
+solc_version = "0.8.35"
+evm_version = "cancun"
+optimizer = true
+optimizer_runs = 200
+via_ir = true
+bytecode_hash = "ipfs"
+cbor_metadata = true
+fs_permissions = [{ access = "read-write", path = "./deployments" }]
+# Alias → [rpc_endpoints].robinhood → ROBINHOOD_RPC_URL (contracts/pons-v2/.env).
+# Override with `--rpc-url robinhood_public` if the env URL is unset.
+eth_rpc_url = "robinhood"
+remappings = [
+  "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+  "@uniswap/v4-core/=lib/v4-core/",
+  "@uniswap/v4-periphery/=lib/v4-periphery/",
+  "@uniswap/v4-hooks-public/=lib/v4-hooks-public/",
+  "v4-core/=lib/v4-core/src/",
+  "v4-periphery/=lib/v4-periphery/src/",
+  "v4-hooks-public/=lib/v4-hooks-public/src/",
+  "permit2/=lib/v4-periphery/lib/permit2/",
+  "forge-std/=lib/forge-std/src/",
+]
+
+# Upstream sources are vendored verbatim; do not lint them into a different shape.
+[lint]
+lint_on_build = false
+
+[profile.default.fuzz]
+runs = 512
+
+[profile.default.invariant]
+runs = 256
+depth = 64
+fail_on_revert = false
+
+[rpc_endpoints]
+# Main: contracts/pons-v2/.env (Foundry loads it automatically).
+robinhood = "${ROBINHOOD_RPC_URL}"
+# Fallback if ROBINHOOD_RPC_URL is unset: `--rpc-url robinhood_public`
+robinhood_public = "https://rpc.mainnet.chain.robinhood.com"
+robinhood_drpc = "https://robinhood.drpc.org"
+robinhood_testnet = "https://rpc.testnet.chain.robinhood.com"
+
+# Robinscan (Etherscan V2). Key from contracts/pons-v2/.env — forge 1.5.1 has no
+# built-in URL for chain 4663, so this table is required.
+[etherscan]
+robinhood = { key = "${ETHERSCAN_API_KEY}", url = "https://api.etherscan.io/v2/api?chainid=4663", chain = 4663 }
+
+# Verification:
+#   Sourcify: --verifier sourcify --chain 4663
+#   Robinscan (Etherscan V2): --verifier etherscan --chain robinhood
+#     (uses [etherscan].robinhood + ETHERSCAN_API_KEY)
