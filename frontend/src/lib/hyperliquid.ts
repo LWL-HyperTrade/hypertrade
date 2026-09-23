@@ -51,7 +51,7 @@ type Hex = `0x${string}`;
 // (or replace these defaults). See docs/FORKING.md.
 const _envBuilderAddress = (process.env.EXPO_PUBLIC_HL_BUILDER_ADDRESS ?? '').trim();
 export const HL_BUILDER_ADDRESS = (
-  _envBuilderAddress || '0x29a1D36DaEE6B0E0Dd4873dd964677000B6e23EB'
+  _envBuilderAddress || '0xD2E580FDcBaf787B4eAbdECd25916587492363Ed'
 ) as `0x${string}`;
 // Keep default in sync with backend BUILDER_FEE / worker HL_BUILDER_FEE_TENTHS_BPS
 // (30 tenths = 3 bps = 0.03%). Max approval stays HL_BUILDER_MAX_FEE_RATE.

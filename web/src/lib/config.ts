@@ -102,7 +102,7 @@ export function tenantAssetDeepLink(coin: string): string {
   return `hypertrade://asset/${encodeURIComponent(coin)}`;
 }
 
-export const DEFAULT_BUILDER_ADDRESS = '0x29a1D36DaEE6B0E0Dd4873dd964677000B6e23EB';
+export const DEFAULT_BUILDER_ADDRESS = '0xD2E580FDcBaf787B4eAbdECd25916587492363Ed';
 export const TENANT_MAX_FEE_TENTHS = 100;
 /** 100 tenths = 10 bps = 0.1%. Shown as percent in the UI. */
 export const TENANT_DEFAULT_FEE_TENTHS = 100;

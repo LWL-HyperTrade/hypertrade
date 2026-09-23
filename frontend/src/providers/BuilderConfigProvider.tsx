@@ -9,7 +9,7 @@ const DEFAULT_BUILDER_FEE =
   Number.isFinite(_envFee) && _envFee > 0 ? _envFee : 30; // 3 bps — sync with backend BUILDER_FEE
 const DEFAULT_BUILDER_ADDRESS =
   (process.env.EXPO_PUBLIC_HL_BUILDER_ADDRESS ?? '').trim()
-  || '0x29a1D36DaEE6B0E0Dd4873dd964677000B6e23EB';
+  || '0xD2E580FDcBaf787B4eAbdECd25916587492363Ed';
 
 /** Tenant wizard ceiling (10 bps). Address stays the pinned HyperTrade builder. */
 export const TENANT_BUILDER_FEE_MAX_TENTHS = 100;

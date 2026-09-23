@@ -487,8 +487,8 @@ async def fetch_stock_live_context(symbol: str) -> str:
 # Defaults = HyperTrade reference builder. Forks that want their own fees must
 # set BUILDER_ADDRESS / BUILDER_FEE (or replace these defaults). See docs/FORKING.md.
 BUILDER_ADDRESS = (
-    os.getenv("BUILDER_ADDRESS", "0x29a1D36DaEE6B0E0Dd4873dd964677000B6e23EB").strip()
-    or "0x29a1D36DaEE6B0E0Dd4873dd964677000B6e23EB"
+    os.getenv("BUILDER_ADDRESS", "0xD2E580FDcBaf787B4eAbdECd25916587492363Ed").strip()
+    or "0xD2E580FDcBaf787B4eAbdECd25916587492363Ed"
 )
 BUILDER_FEE = int(os.getenv("BUILDER_FEE", "30") or "30")  # 30 tenths = 3 bps = 0.03 %
 
