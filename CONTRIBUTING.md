@@ -34,7 +34,7 @@ Thanks for interest in HyperTrade. This repo is a **mobile-first Hyperliquid bui
 
 Optional — if you want to support maintenance of this reference app:
 
-`0x29a1D36DaEE6B0E0Dd4873dd964677000B6e23EB`
+`0xD2E580FDcBaf787B4eAbdECd25916587492363Ed`
 
 ## License
 

@@ -184,9 +184,7 @@ Built on other people's open work. Thank you.
 
 If this reference helps you ship, donations are welcome:
 
-`0x29a1D36DaEE6B0E0Dd4873dd964677000B6e23EB`
-
-(Same address as the HyperTrade HL builder fee recipient.)
+`0xD2E580FDcBaf787B4eAbdECd25916587492363Ed`
 
 ---
 
