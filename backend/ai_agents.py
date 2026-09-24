@@ -496,6 +496,14 @@ MAX_ACTIVE_AGENTS_PER_USER = 12
 #   Drafts count (createSubAccount + fund runs at Create).
 MAX_AGENT_SLOTS_SHARED = 2
 MAX_AGENT_SLOTS_DEDICATED = 10
+# - Resident (BuilderPad): one HD 2 balance per login, so one resident agent
+#   at a time across every app. A second project would share margin and
+#   liquidation. Drafts count. Revoke frees the slot. Dedicated sub-accounts
+#   (mobile, ~$100k volume) stay a later option — not this path.
+MAX_AGENT_SLOTS_RESIDENT = 1
+AGENT_MODES = ("copilot", "dedicated", "resident")
+# Backend flag for the resident product (web console checks its own VITE flag).
+BUILDERPAD_RESIDENTS_ENABLED = os.getenv("BUILDERPAD_RESIDENTS_ENABLED", "").strip() == "1"
 # HL protocol gate for creating sub-accounts (~$100k qualifying volume).
 DEDICATED_MIN_VOLUME_USD = 100_000.0
 MAX_AGENT_DISPLAY_NAME_LEN = 64
@@ -508,25 +516,44 @@ def counts_toward_product_slot(
 
     Stop/pause keep the slot. Revoke frees the product slot.
     Shared drafts do not count (HL named-agent booked at activate).
-    Dedicated drafts do count (HL sub-account created at Create).
+    Dedicated drafts count (HL sub-account created at Create).
+    Resident drafts count (one HD 2 resident per login, including a draft).
     """
     st = status or ""
     if st == "revoked":
         return False
     if st == "draft":
-        return normalize_agent_mode(mode) == "dedicated"
+        return normalize_agent_mode(mode) in ("dedicated", "resident")
     return True
 
 
 def normalize_agent_mode(mode: Optional[str]) -> str:
-    return "dedicated" if (mode or "") == "dedicated" else "copilot"
+    m = mode or ""
+    if m == "dedicated":
+        return "dedicated"
+    if m == "resident":
+        return "resident"
+    return "copilot"
 
 
 def product_slot_max_for_mode(mode: Optional[str]) -> int:
-    """Per-mode product cap: Shared 2, Dedicated 10 (independent pools)."""
-    if normalize_agent_mode(mode) == "dedicated":
+    """Per-mode product cap: Shared 2, Dedicated 10, Resident 1 (independent pools)."""
+    normalized = normalize_agent_mode(mode)
+    if normalized == "dedicated":
         return MAX_AGENT_SLOTS_DEDICATED
+    if normalized == "resident":
+        return MAX_AGENT_SLOTS_RESIDENT
     return MAX_AGENT_SLOTS_SHARED
+
+
+def mode_label(mode: Optional[str]) -> str:
+    """User-facing pool name for slot errors."""
+    normalized = normalize_agent_mode(mode)
+    if normalized == "dedicated":
+        return "Dedicated"
+    if normalized == "resident":
+        return "Resident"
+    return "Shared"
 
 
 def normalize_agent_display_name(
@@ -579,8 +606,8 @@ def validate_agent_config(
     ``max_capital_usd`` is always a notional ceiling (copilot and dedicated).
     Dedicated sub funding is a client-side USDC transfer — not this field.
     """
-    if mode not in ("copilot", "dedicated"):
-        raise AiAgentError("mode must be 'copilot' or 'dedicated'")
+    if mode not in AGENT_MODES:
+        raise AiAgentError("mode must be 'copilot', 'dedicated' or 'resident'")
     symbols = config.get("symbols")
     if not isinstance(symbols, list) or not symbols:
         raise AiAgentError("config.symbols must be a non-empty list")
@@ -739,9 +766,10 @@ def find_copilot_symbol_conflict(
     master_address: str,
     trading_env: str,
 ) -> Optional[Dict[str, str]]:
-    """Copilots on the same master+env share one HL wallet — symbols must be
-    unique across draft/active/paused peers (models don't matter). Dedicated
-    agents keep separate sub-accounts and are ignored here.
+    """Copilots (and residents) on the same master+env share one HL wallet —
+    symbols must be unique across draft/active/paused peers (models don't
+    matter). Dedicated agents keep separate sub-accounts and are ignored here.
+    A copilot on HD 0 and a resident on HD 2 never collide (different master).
 
     Returns ``{symbol, peer_name, peer_id}`` or ``None``.
     """
@@ -750,7 +778,7 @@ def find_copilot_symbol_conflict(
         return None
     master = (master_address or "").strip().lower()
     for row in peer_rows:
-        if (row.get("mode") or "") != "copilot":
+        if (row.get("mode") or "") not in ("copilot", "resident"):
             continue
         if (row.get("hl_master_address") or "").strip().lower() != master:
             continue

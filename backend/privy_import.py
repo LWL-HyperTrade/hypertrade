@@ -292,6 +292,40 @@ def fetch_privy_user_eth_addresses(privy_user_id: str) -> set[str]:
     return out
 
 
+def embedded_hd_index(data: Dict[str, Any], address: str) -> Optional[int]:
+    """Index of an embedded, non-imported EVM wallet, or None.
+
+    Imported keys (UR test signer) and external wallets are not an HD slot.
+    """
+    want = (address or "").strip().lower()
+    if not want.startswith("0x") or len(want) != 42:
+        return None
+    for acct in data.get("linked_accounts") or []:
+        if not isinstance(acct, dict):
+            continue
+        addr = acct.get("address")
+        if not isinstance(addr, str) or addr.strip().lower() != want:
+            continue
+        if acct.get("imported") is True:
+            return None
+        chain = str(acct.get("chain_type") or "").lower()
+        atype = str(acct.get("type") or "").lower()
+        if chain == "solana" or "solana" in atype:
+            return None
+        client = str(acct.get("wallet_client_type") or acct.get("wallet_client") or "").lower()
+        connector = str(acct.get("connector_type") or "").lower()
+        if not (client == "privy" or connector == "embedded" or "embedded" in connector):
+            return None
+        raw = acct.get("wallet_index")
+        if raw is None:
+            raw = acct.get("walletIndex")
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def classify_privy_eth_wallets(data: Dict[str, Any]) -> Tuple[set[str], set[str]]:
     """Split a Privy user payload into (embedded, external) EVM addresses.
 

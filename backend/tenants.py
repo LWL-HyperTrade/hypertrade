@@ -420,6 +420,10 @@ class PatchTenantRequest(BaseModel):
     slug: Optional[str] = None
     wizard_draft: Optional[Dict[str, Any]] = None
     stream: Optional["TenantStreamPatch"] = None
+    # Resident character (docs/RESIDENTS.md). Live-editable like the logo.
+    # Sanitized in server.py via tenant_residents.normalize_persona / _avatar.
+    persona: Optional[Dict[str, Any]] = None
+    avatar: Optional[Dict[str, Any]] = None
     # Trade wallet (Privy HD 0). Wizard sends it on every save so a row created
     # before the embedded wallet resolved is repaired on publish.
     owner_wallet: Optional[str] = None
@@ -917,6 +921,7 @@ def public_view(
     buyback_history: Optional[List[Dict[str, Any]]] = None,
     burn_history: Optional[List[Dict[str, Any]]] = None,
     creator: Optional[Dict[str, Any]] = None,
+    resident: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     slug = row.get("slug") or ""
     socials = row.get("socials") if isinstance(row.get("socials"), dict) else {}
@@ -970,6 +975,8 @@ def public_view(
         view["hl_builder"] = hl_builder
     # Null when the login has no verified social — unverified creators stay anonymous.
     view["creator"] = creator
+    # Null for human apps. { agents, persona, avatar } when an AI resident lives here.
+    view["resident"] = resident
     return view
 
 
@@ -1255,6 +1262,9 @@ def builder_wallets_public(
         "funded_at": row.get("funded_at"),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
+        # HD 2 — resident agents trade from here (docs/RESIDENTS.md). Null until provisioned.
+        "resident_wallet": row.get("resident_wallet") or None,
+        "resident_wallet_index": row.get("resident_wallet_index"),
     }
     if platform_builder:
         view["platform_builder"] = platform_builder

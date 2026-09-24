@@ -870,6 +870,8 @@ async def _build_agent_payload(
     pnl_now = 0.0
     hl_live: Dict[str, Dict[str, Any]] = {}
     open_orders: List[Dict[str, Any]] = []
+    account_value = None
+    withdrawable = None
     # True when at least one clearinghouse fetch succeeded — used to hide
     # DB OPEN ghosts after manual/external closes without waiting for worker.
     ch_any_ok = False
@@ -936,6 +938,16 @@ async def _build_agent_payload(
             if ok:
                 ch_any_ok = True
                 hl_live.update(_parse_hl_asset_positions(state))
+        # Main perp dex is the "" entry (sorted first). That account value is
+        # the resident wallet's trading balance — one number for the desk tab.
+        if ch_results:
+            main_state, main_ok = ch_results[0]
+            if main_ok and isinstance(main_state, dict):
+                summary = main_state.get("marginSummary") if isinstance(main_state.get("marginSummary"), dict) else {}
+                if _is_num(summary.get("accountValue")):
+                    account_value = float(summary["accountValue"])
+                if _is_num(main_state.get("withdrawable")):
+                    withdrawable = float(main_state["withdrawable"])
         if not ch_any_ok:
             critical_ok = False
 
@@ -1252,6 +1264,9 @@ async def _build_agent_payload(
             "maxCapitalUsd": round(max_capital, 2) if max_capital is not None else None,
             "blurb": None,
             "live": str(row.get("status") or "").lower() == "active",
+            "wallet": addr if addr.startswith("0x") else None,
+            "accountValue": round(account_value, 2) if account_value is not None else None,
+            "withdrawable": round(withdrawable, 2) if withdrawable is not None else None,
             "pnlFrom1k": round(pnl_now, 2),
             "indexedEquity": round(indexed_now, 2),
             "equity": equity,
@@ -1270,9 +1285,21 @@ async def _rebuild_showcase_payload(
     supabase: Any,
     fetch_hl: _FetchHl,
 ) -> Tuple[Dict[str, Any], bool]:
-    """Full rebuild. Returns (payload, all_critical_ok)."""
+    """Full rebuild of the house showcase. Returns (payload, all_critical_ok)."""
+    return await build_agents_payload(
+        showcase_agent_ids(), supabase=supabase, fetch_hl=fetch_hl
+    )
+
+
+async def build_agents_payload(
+    ids: List[str],
+    *,
+    supabase: Any,
+    fetch_hl: _FetchHl,
+) -> Tuple[Dict[str, Any], bool]:
+    """Public read-only slice for an explicit agent-id list (house showcase or
+    a BuilderPad resident app — docs/RESIDENTS.md). Returns (payload, all_ok)."""
     now = time.time()
-    ids = showcase_agent_ids()
     if not ids or not supabase:
         return {"agents": [], "generatedAt": int(now * 1000)}, True
 
@@ -1373,4 +1400,48 @@ async def build_showcase_payload(
             return stale
 
         _cache.update(ts=time.time(), payload=payload)
+        return payload
+
+
+# Per-key cache for resident apps (key = tenant id). Same TTL / stale rules as
+# the house showcase; bounded so a directory crawl cannot grow it unbounded.
+_KEYED_CACHE: Dict[str, Dict[str, Any]] = {}
+_KEYED_LOCKS: Dict[str, asyncio.Lock] = {}
+_KEYED_CACHE_MAX = 256
+
+
+async def build_agents_payload_cached(
+    key: str,
+    ids: List[str],
+    *,
+    supabase: Any,
+    fetch_hl: _FetchHl,
+) -> Dict[str, Any]:
+    now = time.time()
+    entry = _KEYED_CACHE.get(key)
+    if entry and entry.get("ids") == ids and now - float(entry.get("ts") or 0) < SHOWCASE_CACHE_TTL_SEC:
+        return entry["payload"]
+
+    lock = _KEYED_LOCKS.setdefault(key, asyncio.Lock())
+    async with lock:
+        now = time.time()
+        entry = _KEYED_CACHE.get(key)
+        if entry and entry.get("ids") == ids and now - float(entry.get("ts") or 0) < SHOWCASE_CACHE_TTL_SEC:
+            return entry["payload"]
+        stale = entry["payload"] if entry and entry.get("ids") == ids else None
+        try:
+            payload, all_ok = await build_agents_payload(ids, supabase=supabase, fetch_hl=fetch_hl)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            if stale is not None:
+                return stale
+            raise
+        if not all_ok and stale is not None:
+            return stale
+        if len(_KEYED_CACHE) >= _KEYED_CACHE_MAX and key not in _KEYED_CACHE:
+            oldest = min(_KEYED_CACHE.items(), key=lambda kv: float(kv[1].get("ts") or 0))[0]
+            _KEYED_CACHE.pop(oldest, None)
+            _KEYED_LOCKS.pop(oldest, None)
+        _KEYED_CACHE[key] = {"ts": time.time(), "ids": list(ids), "payload": payload}
         return payload

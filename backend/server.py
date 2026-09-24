@@ -68,6 +68,7 @@ import ur_statement
 import ur_onramp_permit
 import tenants as tenants_mod
 import tenant_domains as tenant_domains_mod
+import tenant_residents as tenant_residents_mod
 import pons as pons_mod
 import twitch_helix
 
@@ -3070,6 +3071,8 @@ async def _tenant_public(
     if with_creator and row.get("status") == "live":
         creators = await _creators_by_user([row])
         creator = creators.get(str(row.get("privy_user_id") or ""))
+    resident_counts = await _resident_counts_by_tenant([tid] if tid else [])
+    resident = tenant_residents_mod.resident_view(row, agent_count=resident_counts.get(tid, 0))
     if hist is None or bb_hist is None or bn_hist is None:
         ids = [tid] if tid else []
         packed_fee, packed_pledge = await asyncio.gather(
@@ -3093,6 +3096,7 @@ async def _tenant_public(
         buyback_history=bb_hist,
         burn_history=bn_hist,
         creator=creator,
+        resident=resident,
     )
 
 
@@ -3248,9 +3252,10 @@ async def list_my_tenants(
     ids = [str(r["id"]) for r in rows if r.get("id")]
     summaries = await _attribution_summaries_by_tenant(ids)
     hl_stats = await _hl_builder_by_tenant(rows, platform_builder=BUILDER_ADDRESS)
-    hist, pledges = await asyncio.gather(
+    hist, pledges, resident_counts = await asyncio.gather(
         _fee_histories_by_tenant(ids),
         _pledge_histories_by_tenant(ids),
+        _resident_counts_by_tenant(ids),
     )
     empty = tenants_mod.summarize_attributions([])
     return {
@@ -3263,6 +3268,10 @@ async def list_my_tenants(
                 fee_history=hist.get(str(row.get("id") or "").lower(), []),
                 buyback_history=_pledge_pack(pledges, str(row.get("id") or "").lower())[0],
                 burn_history=_pledge_pack(pledges, str(row.get("id") or "").lower())[1],
+                resident=tenant_residents_mod.resident_view(
+                    row,
+                    agent_count=resident_counts.get(str(row.get("id") or "").lower(), 0),
+                ),
             )
             for row in rows
         ]
@@ -3325,10 +3334,11 @@ async def list_tenant_directory(
     ids = [str(r["id"]) for r in rows if r.get("id")]
     summaries = await _attribution_summaries_by_tenant(ids)
     hl_stats = await _hl_builder_by_tenant(rows, platform_builder=BUILDER_ADDRESS)
-    hist, pledges, creators = await asyncio.gather(
+    hist, pledges, creators, resident_counts = await asyncio.gather(
         _fee_histories_by_tenant(ids),
         _pledge_histories_by_tenant(ids),
         _creators_by_user(rows),
+        _resident_counts_by_tenant(ids),
     )
     empty = tenants_mod.summarize_attributions([])
     return {
@@ -3342,6 +3352,10 @@ async def list_tenant_directory(
                 buyback_history=_pledge_pack(pledges, str(row.get("id") or "").lower())[0],
                 burn_history=_pledge_pack(pledges, str(row.get("id") or "").lower())[1],
                 creator=creators.get(str(row.get("privy_user_id") or "")),
+                resident=tenant_residents_mod.resident_view(
+                    row,
+                    agent_count=resident_counts.get(str(row.get("id") or "").lower(), 0),
+                ),
             )
             for row in rows
         ]
@@ -3419,6 +3433,72 @@ async def register_my_builder_wallets(
         raise HTTPException(status_code=status, detail=detail)
     created = (res.data or [payload])[0]
     return await _builder_wallets_payload(created)
+
+
+@api_router.post("/tenants/me/wallets/resident")
+async def register_my_resident_wallet(
+    body: tenant_residents_mod.RegisterResidentWalletRequest,
+    auth_user: PrivyAuthUser = Depends(verify_privy_token),
+):
+    """Persist the HD 2 resident EOA (docs/RESIDENTS.md). Requires the HD 0 / HD 1
+    pair first. Never the trade or builder wallet; idempotent for the same address."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    if not ai_agents_mod.BUILDERPAD_RESIDENTS_ENABLED:
+        raise HTTPException(status_code=400, detail="Residents are not enabled on this backend.")
+    await _assert_caller_owns_wallet(auth_user, body.resident_wallet)
+    pair = await _load_builder_wallets(auth_user.user_id)
+    if not pair:
+        raise HTTPException(status_code=409, detail="Set up your builder wallets first")
+    existing = str(pair.get("resident_wallet") or "").lower()
+    if existing:
+        if existing == body.resident_wallet:
+            return await _builder_wallets_payload(pair)
+        raise HTTPException(status_code=409, detail="Resident wallet is already set")
+
+    # HD index and imported flag come from Privy, not the request body.
+    # Fail closed when the secret is missing — this address is what the fund
+    # step sends USDC to.
+    if not (os.getenv("PRIVY_APP_SECRET", "") or "").strip():
+        raise HTTPException(status_code=503, detail="Could not verify wallets. Try again.")
+    try:
+        privy_user = await asyncio.to_thread(privy_import.fetch_privy_user, auth_user.user_id)
+    except privy_import.PrivyImportError as e:
+        logger.warning("resident wallet classify failed: %s", e)
+        raise HTTPException(status_code=502, detail="Could not verify wallets. Try again.")
+    hd_index = privy_import.embedded_hd_index(privy_user, body.resident_wallet)
+    if hd_index != tenant_residents_mod.RESIDENT_WALLET_INDEX:
+        raise HTTPException(
+            status_code=400,
+            detail="Resident wallet must be the embedded HD 2 wallet",
+        )
+    try:
+        tenant_residents_mod.assert_resident_wallet_distinct(
+            pair, body.resident_wallet
+        )
+    except tenant_residents_mod.ResidentError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
+
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        res = await asyncio.to_thread(
+            lambda: supabase.table("tenant_builder_wallets")
+            .update({
+                "resident_wallet": body.resident_wallet,
+                "resident_wallet_index": tenant_residents_mod.RESIDENT_WALLET_INDEX,
+                "updated_at": now,
+            })
+            .eq("privy_user_id", auth_user.user_id)
+            .execute()
+        )
+    except Exception as e:
+        if tenants_mod.is_unique_violation(e):
+            raise HTTPException(status_code=409, detail="Resident wallet is already in use")
+        status, detail = tenants_mod.parse_supabase_error(e)
+        logger.warning("resident wallet register failed: %s", e)
+        raise HTTPException(status_code=status, detail=detail)
+    updated = (res.data or [{**pair, "resident_wallet": body.resident_wallet}])[0]
+    return await _builder_wallets_payload(updated)
 
 
 async def _hl_builder_readiness(builder_wallet: str) -> Dict[str, Any]:
@@ -4237,6 +4317,218 @@ async def get_tenant_stream(slug: str):
     }
 
 
+# ── BuilderPad Residents (docs/RESIDENTS.md) ─────────────────────────────────
+# AI agents (`ai_agents.mode='resident'`) that live on a tenant app. Trading
+# stays in the AI control plane (/api/ai-agents*) and the worker; these routes
+# only bind agents to an app and expose a public read-only slice.
+
+
+async def _resident_counts_by_tenant(ids: List[str]) -> Dict[str, int]:
+    if not supabase or not ids:
+        return {}
+    try:
+        res = await asyncio.to_thread(
+            lambda: supabase.table("tenant_residents")
+            .select("tenant_id")
+            .in_("tenant_id", ids)
+            .execute()
+        )
+    except Exception as e:
+        # Migration not applied yet → every app is a human app.
+        logger.debug("tenant_residents read failed: %s", e)
+        return {}
+    out: Dict[str, int] = {}
+    for r in res.data or []:
+        tid = str(r.get("tenant_id") or "").lower()
+        if tid:
+            out[tid] = out.get(tid, 0) + 1
+    return out
+
+
+async def _resident_agent_ids(tenant_id: str) -> List[str]:
+    if not supabase or not tenant_id:
+        return []
+    res = await asyncio.to_thread(
+        lambda: supabase.table("tenant_residents")
+        .select("agent_id, created_at")
+        .eq("tenant_id", tenant_id)
+        .order("created_at")
+        .execute()
+    )
+    return [str(r["agent_id"]) for r in (res.data or []) if r.get("agent_id")]
+
+
+async def _load_owned_tenant(slug: str, privy_user_id: str) -> Dict[str, Any]:
+    try:
+        normalized = tenants_mod.normalize_slug(slug)
+    except tenants_mod.TenantError as e:
+        raise _tenant_http(e)
+    found = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .select("*")
+        .eq("slug", normalized)
+        .eq("privy_user_id", privy_user_id)
+        .limit(1)
+        .execute()
+    )
+    row = (found.data or [None])[0]
+    if not row:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return row
+
+
+@api_router.post("/tenants/{slug}/residents")
+async def attach_tenant_resident(
+    slug: str,
+    body: tenant_residents_mod.AttachResidentRequest,
+    auth_user: PrivyAuthUser = Depends(verify_privy_token),
+):
+    """Owner. Bind one of my agents to this app. `mode='resident'` (HD 2) or
+    a house `SHOWCASE_AGENT_IDS` row. From the next worker cycle its orders
+    carry this app's builder code and fee."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    if not ai_agents_mod.BUILDERPAD_RESIDENTS_ENABLED:
+        raise HTTPException(status_code=400, detail="Residents are not enabled on this backend.")
+    row = await _load_owned_tenant(slug, auth_user.user_id)
+    if row.get("status") == "archived":
+        raise HTTPException(status_code=400, detail="Archived apps cannot host a resident")
+
+    agent_res = await asyncio.to_thread(
+        lambda: supabase.table("ai_agents")
+        .select("id, privy_user_id, mode, status, hl_master_address, config, name")
+        .eq("id", body.agent_id)
+        .limit(1)
+        .execute()
+    )
+    agent = (agent_res.data or [None])[0]
+    pair = await _load_builder_wallets(auth_user.user_id)
+    try:
+        tenant_residents_mod.assert_agent_attachable(
+            agent,
+            privy_user_id=auth_user.user_id,
+            resident_wallet=(pair or {}).get("resident_wallet"),
+        )
+    except tenant_residents_mod.ResidentError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
+
+    try:
+        await asyncio.to_thread(
+            lambda: supabase.table("tenant_residents")
+            .insert({"tenant_id": row["id"], "agent_id": body.agent_id})
+            .execute()
+        )
+    except Exception as e:
+        if tenants_mod.is_unique_violation(e):
+            # Same app → idempotent. Another app → conflict.
+            mine = await _resident_agent_ids(str(row["id"]))
+            if body.agent_id in mine:
+                return {"ok": True, "deduped": True, "agent_ids": mine}
+            raise HTTPException(status_code=409, detail="This agent already lives on another app")
+        status, detail = tenants_mod.parse_supabase_error(e)
+        logger.warning("tenant resident attach failed: %s", e)
+        raise HTTPException(status_code=status, detail=detail)
+    return {"ok": True, "agent_ids": await _resident_agent_ids(str(row["id"]))}
+
+
+@api_router.delete("/tenants/{slug}/residents/{agent_id}")
+async def detach_tenant_resident(
+    slug: str,
+    agent_id: str,
+    auth_user: PrivyAuthUser = Depends(verify_privy_token),
+):
+    """Owner. Unbind; the agent keeps running on HyperTrade's builder."""
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    row = await _load_owned_tenant(slug, auth_user.user_id)
+    await asyncio.to_thread(
+        lambda: supabase.table("tenant_residents")
+        .delete()
+        .eq("tenant_id", row["id"])
+        .eq("agent_id", agent_id.strip().lower())
+        .execute()
+    )
+    return {"ok": True, "agent_ids": await _resident_agent_ids(str(row["id"]))}
+
+
+@api_router.get("/tenants/{slug}/resident")
+async def get_tenant_resident(slug: str):
+    """Public. Character + read-only book for the app's resident agents.
+
+    Same payload shape per agent as /api/showcase/agents (equity, positions,
+    decisions), cached ~28s per app. Voice lines are Phase 1 (empty until then).
+    """
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Database not available")
+    try:
+        normalized = tenants_mod.normalize_slug(slug)
+    except tenants_mod.TenantError:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    res = await asyncio.to_thread(
+        lambda: supabase.table("tenants")
+        .select("id, slug, app_name, status, persona, avatar")
+        .eq("slug", normalized)
+        .limit(1)
+        .execute()
+    )
+    row = (res.data or [None])[0]
+    if not row or row.get("status") != "live":
+        raise HTTPException(status_code=404, detail="Tenant not found")
+
+    tid = str(row["id"])
+    agent_ids = await _resident_agent_ids(tid)
+    if not agent_ids and not tenant_residents_mod.has_resident_identity(row):
+        raise HTTPException(status_code=404, detail="No resident on this app")
+
+    import ai_agent_showcase as showcase_mod  # local: defined later in this module's import order
+
+    book = await showcase_mod.build_agents_payload_cached(
+        tid, agent_ids, supabase=supabase, fetch_hl=fetch_hyperliquid
+    )
+    voice_rows: List[Dict[str, Any]] = []
+    try:
+        vres = await asyncio.to_thread(
+            lambda: supabase.table("ai_agent_voice")
+            .select("id, agent_id, channel, mood, text, refs, created_at")
+            .eq("tenant_id", tid)
+            .order("created_at", desc=True)
+            .limit(50)
+            .execute()
+        )
+        voice_rows = vres.data or []
+    except Exception as e:
+        logger.debug("ai_agent_voice read failed: %s", e)
+
+    agents = book.get("agents") or []
+    persona = row.get("persona") if isinstance(row.get("persona"), dict) else {}
+    avatar = row.get("avatar") if isinstance(row.get("avatar"), dict) else {}
+    # Mood from ai_agents.status (not the ~28s showcase book), so activating
+    # an attached agent flips Resting immediately.
+    status_rows: List[Dict[str, Any]] = []
+    if agent_ids:
+        try:
+            sres = await asyncio.to_thread(
+                lambda: supabase.table("ai_agents")
+                .select("id, status")
+                .in_("id", agent_ids)
+                .execute()
+            )
+            status_rows = sres.data or []
+        except Exception as e:
+            logger.debug("resident mood status read failed: %s", e)
+            status_rows = agents
+    return {
+        "slug": row.get("slug"),
+        "app_name": row.get("app_name"),
+        "persona": persona,
+        "avatar": avatar,
+        "mood": tenant_residents_mod.latest_mood(voice_rows, status_rows or agents),
+        "agents": agents,
+        "voice": tenant_residents_mod.voice_public(voice_rows),
+        "generatedAt": book.get("generatedAt"),
+    }
+
+
 @api_router.patch("/tenants/{slug}")
 async def patch_tenant(
     slug: str,
@@ -4320,6 +4612,14 @@ async def patch_tenant(
     for key in ("app_name", "description", "logo_url", "builder_fee_tenths", "buyback_pct", "burn_pct", "status"):
         if key in payload and payload[key] is not None:
             updates[key] = payload[key]
+    # Resident character — live-editable like the logo (docs/RESIDENTS.md).
+    try:
+        if "persona" in payload and payload["persona"] is not None:
+            updates["persona"] = tenant_residents_mod.normalize_persona(payload["persona"])
+        if "avatar" in payload and payload["avatar"] is not None:
+            updates["avatar"] = tenant_residents_mod.normalize_avatar(payload["avatar"])
+    except tenant_residents_mod.ResidentError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
     if "socials" in payload and payload["socials"] is not None and body.socials is not None:
         socials = body.socials
         if any(getattr(socials, k) for k in tenants_mod.VERIFIED_SOCIAL_KEYS):
@@ -19509,6 +19809,7 @@ import ai_agents as ai_agents_mod
 
 def _agent_public_view(row: Dict[str, Any]) -> Dict[str, Any]:
     """Strip ciphertexts — no key material ever leaves the backend."""
+    aid = str(row.get("id") or "")
     return {
         "id": row.get("id"),
         "name": row.get("name"),
@@ -19517,7 +19818,7 @@ def _agent_public_view(row: Dict[str, Any]) -> Dict[str, Any]:
         "dryRun": row.get("dry_run"),
         "hlMasterAddress": row.get("hl_master_address"),
         "hlAgentAddress": row.get("hl_agent_address"),
-        "hlAgentName": ai_agents_mod.agent_hl_name(str(row.get("id"))),
+        "hlAgentName": ai_agents_mod.agent_hl_name(aid),
         "hlSubaccountAddress": row.get("hl_subaccount_address"),
         "config": row.get("config"),
         "tradingEnv": row.get("trading_env"),
@@ -19527,6 +19828,7 @@ def _agent_public_view(row: Dict[str, Any]) -> Dict[str, Any]:
         "lastRunAt": row.get("last_run_at"),
         # Worker-written degraded hint only — never overloads status.
         "health": row.get("health") or {},
+        "showcase": tenant_residents_mod.is_house_showcase_agent(aid),
     }
 
 
@@ -19579,20 +19881,22 @@ def _assert_product_agent_slots_available(
     slot_max = ai_agents_mod.product_slot_max_for_mode(mode)
     used = _count_product_agent_slots(user_id, mode)
     dedicated = ai_agents_mod.normalize_agent_mode(mode) == "dedicated"
-    kind = "Dedicated" if dedicated else "Shared"
+    resident = ai_agents_mod.normalize_agent_mode(mode) == "resident"
+    kind = ai_agents_mod.mode_label(mode)
     if used >= slot_max:
-        how = (
-            "Delete a draft or revoke a stopped agent to free a slot"
-            if dedicated
-            else "Revoke a stopped agent to free a slot"
+        if resident:
+            how = "Revoke that resident before starting one on another app"
+        elif dedicated:
+            how = "Delete a draft or revoke a stopped agent to free a slot"
+        else:
+            how = "Revoke a stopped agent to free a slot"
+        detail = (
+            "You already have an AI resident on this login. "
+            f"{how}. Stopping alone keeps it."
+            if resident
+            else f"{kind} agent slots full ({used}/{slot_max}). {how} — stopping alone keeps the slot taken."
         )
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"{kind} agent slots full ({used}/{slot_max}). "
-                f"{how} — stopping alone keeps the slot taken."
-            ),
-        )
+        raise HTTPException(status_code=409, detail=detail)
     return slot_max
 
 
@@ -19719,11 +20023,11 @@ def _assert_copilot_symbols_available(
     symbols: List[str],
     exclude_agent_id: Optional[str] = None,
 ) -> None:
-    """Block overlapping symbols across copilots on the same master wallet.
+    """Block overlapping symbols across copilots / residents on the same master wallet.
 
     Dedicated agents use isolated sub-accounts and may share symbols.
     """
-    if mode != "copilot":
+    if mode not in ("copilot", "resident"):
         return
     res = (
         supabase.table("ai_agents")
@@ -19906,8 +20210,34 @@ async def create_ai_agent(
             detail="AI agents cannot be created for demo/testnet. Switch to live trading, then create.",
         )
 
-    if body.mode not in ("copilot", "dedicated"):
+    if body.mode not in ai_agents_mod.AGENT_MODES:
         raise HTTPException(status_code=400, detail="Invalid mode")
+
+    # Resident (BuilderPad, docs/RESIDENTS.md): the master must be the stored
+    # HD 2 wallet. Owning HD 0 / HD 1 is not enough.
+    if body.mode == "resident":
+        if not ai_agents_mod.BUILDERPAD_RESIDENTS_ENABLED:
+            raise HTTPException(
+                status_code=400,
+                detail="Resident agents are not enabled on this backend.",
+            )
+        pair = await _load_builder_wallets(auth_user.user_id)
+        stored = str((pair or {}).get("resident_wallet") or "").lower()
+        if not stored or master.lower() != stored:
+            raise HTTPException(
+                status_code=400,
+                detail="Resident agents must trade from your resident wallet",
+            )
+    elif body.mode in ("copilot", "dedicated"):
+        # Copilot trades the master balance. A copilot (or a dedicated sub
+        # funded from that master) on HD 2 would share the resident book.
+        pair = await _load_builder_wallets(auth_user.user_id)
+        stored = str((pair or {}).get("resident_wallet") or "").lower()
+        if stored and master.lower() == stored:
+            raise HTTPException(
+                status_code=400,
+                detail="That address is your resident wallet. Shared and dedicated agents use your trade wallet.",
+            )
 
     # Dedicated (HL sub-account) — fund/reclaim via sendAsset spot↔spot under
     # unifiedAccount (see scripts/hl-unified-subaccount-probe.mjs). Keep in sync
@@ -20014,7 +20344,13 @@ async def create_ai_agent(
 
 
 @api_router.get("/ai-agents")
-async def list_ai_agents(auth_user: PrivyAuthUser = Depends(verify_privy_token)):
+async def list_ai_agents(
+    auth_user: PrivyAuthUser = Depends(verify_privy_token),
+    include_resident: bool = Query(
+        False,
+        description="Include mode=resident agents. Default false so the phone app never treats them as Shared.",
+    ),
+):
     if not supabase:
         raise HTTPException(status_code=503, detail="AI agents not configured")
     res = (
@@ -20024,8 +20360,43 @@ async def list_ai_agents(auth_user: PrivyAuthUser = Depends(verify_privy_token))
         .order("created_at", desc=True)
         .execute()
     )
+    rows = res.data or []
+    if not include_resident:
+        rows = [r for r in rows if (r.get("mode") or "") != "resident"]
+    views = [_agent_public_view(r) for r in rows]
+    if include_resident:
+        resident_ids = [str(v["id"]) for v in views if v.get("mode") == "resident" and v.get("id")]
+        slug_by_agent: Dict[str, str] = {}
+        if resident_ids:
+            links = (
+                supabase.table("tenant_residents")
+                .select("agent_id, tenant_id")
+                .in_("agent_id", resident_ids)
+                .execute()
+            )
+            tenant_ids = list({r.get("tenant_id") for r in (links.data or []) if r.get("tenant_id")})
+            slug_by_id: Dict[str, str] = {}
+            if tenant_ids:
+                tenants = (
+                    supabase.table("tenants")
+                    .select("id, slug")
+                    .in_("id", tenant_ids)
+                    .execute()
+                )
+                slug_by_id = {
+                    str(t.get("id")): str(t.get("slug") or "")
+                    for t in (tenants.data or [])
+                    if t.get("id") and t.get("slug")
+                }
+            for link in links.data or []:
+                slug = slug_by_id.get(str(link.get("tenant_id") or ""))
+                if slug:
+                    slug_by_agent[str(link.get("agent_id") or "")] = slug
+        for view in views:
+            if view.get("mode") == "resident":
+                view["residentSlug"] = slug_by_agent.get(str(view.get("id") or ""))
     return {
-        "agents": [_agent_public_view(r) for r in (res.data or [])],
+        "agents": views,
         # App uses this to hide the CoinGlass-key step in the create wizard.
         "coinglassGlobalMode": ai_agents_mod.COINGLASS_GLOBAL_MODE,
     }
@@ -20071,18 +20442,41 @@ async def activate_ai_agent(
             detail=f"You can have at most {ai_agents_mod.MAX_ACTIVE_AGENTS_PER_USER} active agents. Stop one first.",
         )
 
-    # Shared draft → live consumes a slot. Dedicated draft already holds one
-    # (HL sub created at Create); resume already holds one either mode.
+    # Shared draft → live consumes a slot. Dedicated and resident drafts
+    # already hold their one slot (counted at Create); resume already holds one.
+    # The SQL cap counts non-draft rows only, so this early check must not
+    # count the draft against itself.
     mode = row.get("mode") or "copilot"
     product_slot_max = ai_agents_mod.product_slot_max_for_mode(mode)
     if (
         row["status"] == "draft"
-        and ai_agents_mod.normalize_agent_mode(mode) != "dedicated"
+        and ai_agents_mod.normalize_agent_mode(mode) not in ("dedicated", "resident")
     ):
         product_slot_max = _assert_product_agent_slots_available(
             user_id=auth_user.user_id,
             mode=mode,
         )
+
+    if ai_agents_mod.normalize_agent_mode(mode) == "resident":
+        if not tenant_residents_mod.is_house_showcase_agent(agent_id):
+            pair = await _load_builder_wallets(auth_user.user_id)
+            stored = str((pair or {}).get("resident_wallet") or "").lower()
+            master = str(row.get("hl_master_address") or "").lower()
+            if not stored or master != stored:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Resident agents must trade from your resident wallet",
+                )
+    elif ai_agents_mod.normalize_agent_mode(mode) in ("copilot", "dedicated"):
+        if not tenant_residents_mod.is_house_showcase_agent(agent_id):
+            pair = await _load_builder_wallets(auth_user.user_id)
+            stored = str((pair or {}).get("resident_wallet") or "").lower()
+            master = str(row.get("hl_master_address") or "").lower()
+            if stored and master == stored:
+                raise HTTPException(
+                    status_code=400,
+                    detail="That address is your resident wallet. Shared and dedicated agents use your trade wallet.",
+                )
 
     _assert_copilot_symbols_available(
         user_id=auth_user.user_id,
@@ -20196,11 +20590,7 @@ async def activate_ai_agent(
         if err == "slots":
             used = (payload or {}).get("used")
             mx = (payload or {}).get("max") or product_slot_max
-            kind = (
-                "Dedicated"
-                if (payload or {}).get("mode") == "dedicated"
-                else "Shared"
-            )
+            kind = ai_agents_mod.mode_label((payload or {}).get("mode") or mode)
             raise HTTPException(
                 status_code=409,
                 detail=(
