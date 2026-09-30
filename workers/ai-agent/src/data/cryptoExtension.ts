@@ -2,14 +2,17 @@
  * Crypto-only EXTENSION / EXHAUSTION context — stretch features for prompts.
  *
  * Soft guidance only (no worker gate, no composite "extension score").
- * Built from: CoinGlass RSI list + EMA list (same caches as HIP-3) + local
- * wall-clock run-up / funding / OI percentiles from already-fetched bars.
+ * Built from CoinGlass RSI + EMA lists, or on the CoinAnk path from the RSI map
+ * plus EMAs of the fetched klines. Local wall-clock run-up / funding / OI
+ * percentiles always come from the bars already fetched.
  *
  * Gated by isCryptoAsset — never attach to equities/metals/HIP-3 stocks.
  */
+import { config } from '../config.js';
 import { coinPart, isCryptoAsset } from '../brain/assetClass.js';
 import type { FuturesBar } from '../brain/computeScalperFlags.js';
 import { getEmaContext } from './emaList.js';
+import { getCoinankRsiContext } from './coinank.js';
 import { getRsiContext } from './rsiList.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -184,6 +187,40 @@ function tagStretch(args: {
   return { stretched, oversold, fundingCrowdedLong, fundingCrowdedShort };
 }
 
+function emaLast(values: number[], period: number): number | null {
+  if (values.length < period || period < 1) return null;
+  const k = 2 / (period + 1);
+  let value = values.slice(0, period).reduce((s, c) => s + c, 0) / period;
+  for (let i = period; i < values.length; i += 1) {
+    value = values[i] * k + value * (1 - k);
+  }
+  return value;
+}
+
+/** 4h / 1d / 1w distance from the fetched klines. Weekly needs ~168h of bars. */
+function localEmaPcts(bars: FuturesBar[]): {
+  vsEma4hPct: number | null;
+  vsEma1dPct: number | null;
+  vsEma1wPct: number | null;
+} {
+  const empty = { vsEma4hPct: null, vsEma1dPct: null, vsEma1wPct: null };
+  const closes = bars
+    .map((b) => Number(b.close_price))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  if (closes.length < 2) return empty;
+  const prev = bars[bars.length - 2]?.timestamp;
+  const lastTs = bars[bars.length - 1]?.timestamp;
+  const barMs =
+    Number.isFinite(prev) && Number.isFinite(lastTs) && lastTs > prev
+      ? lastTs - prev
+      : 60 * 60 * 1000;
+  const perHour = (60 * 60 * 1000) / barMs;
+  const close = closes[closes.length - 1];
+  const vs = (hours: number) =>
+    pctVs(close, emaLast(closes, Math.max(1, Math.round(hours * perHour))));
+  return { vsEma4hPct: vs(4), vsEma1dPct: vs(24), vsEma1wPct: vs(168) };
+}
+
 /**
  * Build extension context for a crypto symbol. Returns null for non-crypto
  * or when there is nothing useful to show.
@@ -195,20 +232,41 @@ export async function buildCryptoExtension(
   if (!isCryptoAsset(hlCoin)) return null;
 
   const display = coinPart(hlCoin);
-  const [rsi, ema] = await Promise.all([
-    getRsiContext(hlCoin).catch(() => null),
-    getEmaContext(hlCoin).catch(() => null),
-  ]);
   const local = computeLocalStretch(bars);
 
-  const close = ema?.close ?? null;
-  const vsEma4hPct = pctVs(close, ema?.ema4h ?? null);
-  const vsEma1dPct = ema?.vsEma1dPct ?? pctVs(close, ema?.ema1d ?? null);
-  const vsEma1wPct = ema?.vsEma1wPct ?? pctVs(close, ema?.ema1w ?? null);
+  let rsi1h: number | null = null;
+  let rsi4h: number | null = null;
+  let rsi1d: number | null = null;
+  let vsEma4hPct: number | null = null;
+  let vsEma1dPct: number | null = null;
+  let vsEma1wPct: number | null = null;
+
+  if (config.coinankMode) {
+    const rsi = await getCoinankRsiContext(hlCoin).catch(() => null);
+    rsi1h = rsi?.rsi1h ?? null;
+    rsi4h = rsi?.rsi4h ?? null;
+    rsi1d = rsi?.rsi1d ?? null;
+    const emas = localEmaPcts(bars);
+    vsEma4hPct = emas.vsEma4hPct;
+    vsEma1dPct = emas.vsEma1dPct;
+    vsEma1wPct = emas.vsEma1wPct;
+  } else {
+    const [rsi, ema] = await Promise.all([
+      getRsiContext(hlCoin).catch(() => null),
+      getEmaContext(hlCoin).catch(() => null),
+    ]);
+    rsi1h = rsi?.rsi1h ?? null;
+    rsi4h = rsi?.rsi4h ?? null;
+    rsi1d = rsi?.rsi1d ?? null;
+    const close = ema?.close ?? null;
+    vsEma4hPct = pctVs(close, ema?.ema4h ?? null);
+    vsEma1dPct = ema?.vsEma1dPct ?? pctVs(close, ema?.ema1d ?? null);
+    vsEma1wPct = ema?.vsEma1wPct ?? pctVs(close, ema?.ema1w ?? null);
+  }
 
   const tags = tagStretch({
-    rsi4h: rsi?.rsi4h ?? null,
-    rsi1d: rsi?.rsi1d ?? null,
+    rsi4h,
+    rsi1d,
     vsEma1dPct,
     runUp3dPctl: local.runUp3dPctl,
     fundingBps: local.fundingBps,
@@ -217,9 +275,9 @@ export async function buildCryptoExtension(
 
   const ctx: CryptoExtensionContext = {
     symbol: display,
-    rsi1h: rsi?.rsi1h ?? null,
-    rsi4h: rsi?.rsi4h ?? null,
-    rsi1d: rsi?.rsi1d ?? null,
+    rsi1h,
+    rsi4h,
+    rsi1d,
     vsEma4hPct,
     vsEma1dPct,
     vsEma1wPct,

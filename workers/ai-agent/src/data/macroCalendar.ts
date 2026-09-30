@@ -201,7 +201,7 @@ async function produceCalendar(): Promise<CalendarEvent[]> {
   }
 
   let macro: CalendarEvent[] = [];
-  const key = config.coinglassHouseKey;
+  const key = config.coinankMode ? null : config.coinglassHouseKey;
   if (key) {
     try {
       macro = await fetchEconomicCalendar(key);
@@ -223,7 +223,7 @@ async function getFullCalendar(): Promise<CalendarEvent[]> {
   if (memo && Date.now() - memo.at < MEMO_TTL_MS) return memo.events;
   const events =
     (await getOrRefreshGlobalContext<CalendarEvent[]>({
-      key: 'macro_calendar_v2',
+      key: config.coinankMode ? 'macro_calendar_seeded_v1' : 'macro_calendar_v2',
       ttlMs: CALENDAR_TTL_MS,
       produce: produceCalendar,
     })) ?? SEEDED_MACRO_EVENTS;

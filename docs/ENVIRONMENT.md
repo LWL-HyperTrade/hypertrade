@@ -115,6 +115,7 @@ Also set `ALPHA_WARMUP_SECRET` (and `ALPHAVANTAGE_KEY`) on the **hypertrade-main
 | `AGENT_KMS_KEY` | Encrypt agent keys at create time (match worker) |
 | `SHOWCASE_AGENT_IDS` | Public showcase agent UUIDs (comma-separated; empty/unset = no agents) |
 | `COINGLASS_GLOBAL_MODE` | Align with worker house-key mode |
+| `ENABLE_COINANK` | `1` = CoinAnk Plan 2 is the market-data path (no CoinGlass calls). Set on backend and worker. Do not combine with `COINGLASS_GLOBAL_MODE` |
 
 ### AI worker (optional — Tier 2)
 
@@ -148,6 +149,7 @@ Custom domains (Activate only) need the Vercel vars below so HTTPS attaches to t
 | `BUILDERPAD_VERCEL_TEAM_ID` | Optional. Team scope for the Vercel API |
 | `BUILDERPAD_VERCEL_CNAME` | CNAME target shown to creators. Default `cname.vercel-dns.com` |
 | `TWITCH_CLIENT_ID` / `TWITCH_CLIENT_SECRET` | Optional. Twitch Helix app token for BuilderPad desk LIVE/offline. Unset → overlay still works, `live` is unknown. Not the creator’s Privy Twitch login |
+| `BUILDERPAD_RESIDENTS_ENABLED` | Optional. `1` allows `mode='resident'` agents, the HD 2 resident wallet, and attaching agents to apps ([RESIDENTS.md](./RESIDENTS.md)). Public resident pages read regardless. Needs the AI tables + `builderpad_tenant_residents.sql` |
 
 After a host verifies, add `https://{host}` to Privy **Allowed origins** (same App ID). There is no public Privy API for that list. `{slug}.builderpad.xyz` is already covered by `https://*.builderpad.xyz`.
 
@@ -181,6 +183,7 @@ Injected at build time (`EXPO_PUBLIC_*`). Prefer `.env` / EAS secrets over commi
 | `VITE_TENANT_PUBLIC_ORIGIN` | Legacy. If set, hostname is used as the base domain |
 | `VITE_ARBITRUM_RPC_URL` | Optional. Same role as `EXPO_PUBLIC_ARBITRUM_RPC_URL` for the Vite wallet sheet (Arbitrum USDC reads). Unset → viem public RPC |
 | `VITE_WALLETCONNECT_PROJECT_ID` | Optional. Your WalletConnect (Reown) Cloud project ID for Privy's `wallet_connect_qr` login entry on the web console → `config.walletConnectCloudProjectId`. Unset → Privy's shared project (rate-limited, our domains show as unverified in wallets). Alternative: set it in the Privy Dashboard instead. Allowlist `builderpad.xyz`, `www.builderpad.xyz`, `*.builderpad.xyz` on the Reown project. Not a backend var; unrelated to `EXPO_PUBLIC_WALLETCONNECT_PROJECT_ID` (Expo Reown AppKit) though the same project can be reused |
+| `VITE_BUILDERPAD_RESIDENTS` | Optional. `1` shows the **AI resident** card on My Apps (docs/RESIDENTS.md). Backend must also set `BUILDERPAD_RESIDENTS_ENABLED=1`. Avatars: drop `.vrm` / `.vrma` files under `web/public/resident/` (README there) |
 | `VITE_ROBINHOOD_RPC_URL` | **`web/.env` only** (Vite prefix). Optional. Robinhood Chain (4663) RPC for Pons reads, `simulateContract`, and Privy embedded-wallet sends (`addRpcUrlOverrideToChain`). Unset → public / Privy default RPC. Must be a **Robinhood** endpoint (Alchemy `robinhood-mainnet`), not Arbitrum. Restart Vite after changing it. This is **not** the Foundry `ROBINHOOD_RPC_URL` |
 
 ### Pons Foundry (`contracts/pons-v2/`) — separate from web/backend
@@ -208,7 +211,8 @@ Foundry loads `.env` from **`contracts/pons-v2/`** (the Foundry project root), n
 | `HL_BUILDER_ADDRESS` / `HL_BUILDER_FEE_TENTHS_BPS` | Required address; fee defaults to `30` (same as backend `BUILDER_FEE`) if unset |
 | `FORCE_DRY_RUN` | `1` = force shadow for all agents (wired in worker; overrides DB `dry_run`) |
 | `HL_ENV` | `mainnet` \| `testnet` |
-| `COINGLASS_HOUSE_KEY` + `COINGLASS_GLOBAL_MODE=1` | Shared bar cache mode |
+| `COINGLASS_HOUSE_KEY` + `COINGLASS_GLOBAL_MODE=1` | Shared bar cache mode (ignored when `ENABLE_COINANK=1`) |
+| `ENABLE_COINANK` + `COINANK_API_KEY` | CoinAnk Plan 2 path. Crypto series from CoinAnk; HIP-3 from Massive and the non-CoinGlass caches. CoinGlass is not called. Leave unset to keep CoinGlass |
 | `MASSIVE_API_KEY` | Equity options context |
 | `OPENAI_API_KEY` / `XAI_API_KEY` / `GEMINI_API_KEY` / `DEEPSEEK_API_KEY` / `ANTHROPIC_API_KEY` | House LLM providers |
 | `FORCE_DRY_RUN` | `1` = shadow all agents in this process |

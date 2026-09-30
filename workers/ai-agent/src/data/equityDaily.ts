@@ -15,6 +15,7 @@ import { config } from '../config.js';
 import { coinPart } from '../brain/assetClass.js';
 import { resolveOptionsTicker, metalsOptionsProxy } from './equityOptions.js';
 import { getOrRefreshGlobalContext } from '../lib/globalCache.js';
+import type { EmaContext, MacroBetaContext } from './emaList.js';
 
 export interface EquityDailyContext {
   /** Massive ticker (TSLA, or GLD/SLV proxy for metals). */
@@ -191,6 +192,46 @@ export async function getEquityDailyContext(
   } catch {
     return null;
   }
+}
+
+/** SPY/QQQ daily stack for HIP-3 macro beta when CoinGlass EMAs are not in use. */
+async function massiveEmaProxy(ticker: string): Promise<EmaContext | null> {
+  const apiKey = config.massiveApiKey;
+  if (!apiKey) return null;
+  const closes = await getCachedCloses(ticker, apiKey).catch(() => null);
+  if (!closes || closes.length < 50) return null;
+  const close = closes[closes.length - 1];
+  const e20 = ema(closes, 20);
+  const e50 = ema(closes, 50);
+  const e200 = ema(closes, 200);
+  let stack: EmaContext['stack'] = 'na';
+  if (e20 != null && e50 != null && e200 != null) {
+    if (close > e20 && e20 > e50 && e50 > e200) stack = 'bullish';
+    else if (close < e20 && e20 < e50 && e50 < e200) stack = 'bearish';
+    else stack = 'mixed';
+  }
+  return {
+    symbol: ticker,
+    cgSymbol: ticker,
+    close,
+    ema1h: null,
+    ema4h: e20,
+    ema1d: e50,
+    ema1w: e200,
+    vsEma1dPct: pctVs(close, e50),
+    vsEma1wPct: pctVs(close, e200),
+    stack,
+    trendLabel: '50d',
+  };
+}
+
+export async function getMassiveMacroBetaContext(): Promise<MacroBetaContext> {
+  if (!config.massiveApiKey) return { sp500: null, qqq: null, dxy: null };
+  const [sp500, qqq] = await Promise.all([
+    massiveEmaProxy('SPY'),
+    massiveEmaProxy('QQQ'),
+  ]);
+  return { sp500, qqq, dxy: null };
 }
 
 function fmt(n: number | null, digits = 2): string {

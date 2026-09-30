@@ -57,6 +57,11 @@ export interface EmaContext {
   vsEma1wPct: number | null;
   /** Stack: price > 4h > 1d > 1w → bullish, reverse → bearish, else mixed. */
   stack: 'bullish' | 'bearish' | 'mixed' | 'na';
+  /**
+   * Set on the Massive daily proxy (50-day). Unset on the CoinGlass 4h/1d/1w
+   * stack, which keeps the original "1d EMA" wording.
+   */
+  trendLabel?: '50d';
 }
 
 export interface MacroBetaContext {
@@ -171,6 +176,7 @@ function ctxFromRow(displaySymbol: string, cgSymbol: string, row: EmaRow): EmaCo
 }
 
 export async function getEmaContext(hlCoin: string): Promise<EmaContext | null> {
+  if (config.coinankMode) return null;
   const map = await getEmaMap();
   if (!map) return null;
   const display = coinPart(hlCoin);
@@ -186,6 +192,7 @@ export async function getEmaContext(hlCoin: string): Promise<EmaContext | null> 
  * these closes into an asset's own EMA block.
  */
 export async function getMacroBetaContext(): Promise<MacroBetaContext> {
+  if (config.coinankMode) return { sp500: null, dxy: null, qqq: null };
   const map = await getEmaMap();
   if (!map) return { sp500: null, dxy: null, qqq: null };
   const spHit = lookupRow(map, ['SPY']);
@@ -249,18 +256,21 @@ export function renderMacroBetaSection(
   const bits: string[] = [];
   // Deliberately omit absolute ETF prices — they are NOT tradeXYZ index levels.
   if (beta.sp500) {
+    const vs = beta.sp500.trendLabel === '50d' ? 'vs 50d EMA' : 'vs 1d EMA';
     bits.push(
-      `SPY (S&P ETF proxy): ${fmtPct(beta.sp500.vsEma1dPct)} vs 1d EMA, stack ${beta.sp500.stack}`,
+      `SPY (S&P ETF proxy): ${fmtPct(beta.sp500.vsEma1dPct)} ${vs}, stack ${beta.sp500.stack}`,
     );
   }
   if (beta.qqq) {
+    const vs = beta.qqq.trendLabel === '50d' ? 'vs 50d EMA' : 'vs 1d EMA';
     bits.push(
-      `QQQ (Nasdaq-100 ETF proxy): ${fmtPct(beta.qqq.vsEma1dPct)} vs 1d EMA, stack ${beta.qqq.stack}`,
+      `QQQ (Nasdaq-100 ETF proxy): ${fmtPct(beta.qqq.vsEma1dPct)} ${vs}, stack ${beta.qqq.stack}`,
     );
   }
   if (beta.dxy) {
+    const vs = beta.dxy.trendLabel === '50d' ? 'vs 50d EMA' : 'vs 1d EMA';
     bits.push(
-      `DXY: ${fmtPct(beta.dxy.vsEma1dPct)} vs 1d EMA, stack ${beta.dxy.stack}`,
+      `DXY: ${fmtPct(beta.dxy.vsEma1dPct)} ${vs}, stack ${beta.dxy.stack}`,
     );
   }
   if (bits.length === 0) return '';

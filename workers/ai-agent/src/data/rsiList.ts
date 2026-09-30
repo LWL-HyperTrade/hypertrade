@@ -80,6 +80,7 @@ async function getRsiMap(): Promise<Record<string, RsiRow> | null> {
 }
 
 export async function getRsiContext(hlCoin: string): Promise<RsiContext | null> {
+  if (config.coinankMode) return null;
   const map = await getRsiMap();
   if (!map) return null;
   const display = coinPart(hlCoin);

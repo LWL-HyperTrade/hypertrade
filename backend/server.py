@@ -20149,7 +20149,7 @@ async def patch_ai_agent(
         )
         updates["config"] = clean_config
 
-    if body.coinglassApiKey is not None and str(body.coinglassApiKey).strip():
+    if body.coinglassApiKey is not None and str(body.coinglassApiKey).strip() and not ai_agents_mod.COINANK_MODE:
         raw_key = str(body.coinglassApiKey).strip()
         try:
             await ai_agents_mod.verify_coinglass_api_key(raw_key)
@@ -20277,11 +20277,12 @@ async def create_ai_agent(
     raw_coinglass = (body.coinglassApiKey or "").strip()
     # Global-cache mode: house CoinGlass key serves all agents — personal key
     # optional (still stored if supplied, so a BYOK revert keeps working).
-    if not raw_coinglass and not ai_agents_mod.COINGLASS_GLOBAL_MODE:
+    # CoinAnk mode: no CoinGlass key is required, verified, or stored.
+    if not raw_coinglass and not ai_agents_mod.COINGLASS_GLOBAL_MODE and not ai_agents_mod.COINANK_MODE:
         raise HTTPException(status_code=400, detail="CoinGlass API key is required")
 
     try:
-        if raw_coinglass:
+        if raw_coinglass and not ai_agents_mod.COINANK_MODE:
             await ai_agents_mod.verify_coinglass_api_key(raw_coinglass)
         clean_config = ai_agents_mod.validate_agent_config(
             body.config or {}, mode=body.mode
@@ -20289,7 +20290,9 @@ async def create_ai_agent(
         keypair = ai_agents_mod.generate_agent_keypair()
         key_ciphertext = ai_agents_mod.encrypt_secret(keypair["private_key"])
         coinglass_ct = (
-            ai_agents_mod.encrypt_secret(raw_coinglass) if raw_coinglass else None
+            ai_agents_mod.encrypt_secret(raw_coinglass)
+            if raw_coinglass and not ai_agents_mod.COINANK_MODE
+            else None
         )
         model_cts = {
             provider: ai_agents_mod.encrypt_secret(key.strip())
@@ -20399,6 +20402,7 @@ async def list_ai_agents(
         "agents": views,
         # App uses this to hide the CoinGlass-key step in the create wizard.
         "coinglassGlobalMode": ai_agents_mod.COINGLASS_GLOBAL_MODE,
+        "coinankMode": ai_agents_mod.COINANK_MODE,
     }
 
 
@@ -20532,7 +20536,7 @@ async def activate_ai_agent(
     # BYOK mode only: fail closed on missing/invalid CoinGlass — otherwise a
     # junk key can ride another agent's market-data cache into house-paid LLM
     # calls. In global mode the house key entitles everyone; skip entirely.
-    if not ai_agents_mod.COINGLASS_GLOBAL_MODE:
+    if not ai_agents_mod.COINGLASS_GLOBAL_MODE and not ai_agents_mod.COINANK_MODE:
         cg_ct = row.get("coinglass_key_ciphertext")
         if not cg_ct:
             raise HTTPException(

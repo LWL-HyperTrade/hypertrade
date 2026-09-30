@@ -72,12 +72,14 @@ Stack:
 
 | Var | Role |
 |-----|------|
-| `COINGLASS_HOUSE_KEY` | Shared CoinGlass key for market snapshots |
-| `MASSIVE_API_KEY` | Equity options context (HIP-3 paths); absent → CoinGlass-only / disclaimer |
+| `COINGLASS_HOUSE_KEY` | Shared CoinGlass key for market snapshots (unused when `ENABLE_COINANK=1`) |
+| `ENABLE_COINANK` | `1` = CoinAnk Plan 2 replaces CoinGlass for this worker. Requires `COINANK_API_KEY`. Also set on the API so create/activate does not demand a user CoinGlass key. If both this and `COINGLASS_GLOBAL_MODE` are set, CoinAnk wins |
+| `COINANK_API_KEY` | CoinAnk key for the Plan 2 path (crypto OHLC, OI, funding, liquidations, taker buy/sell, RSI map, HL whale pages). No spot-taker series on this plan |
+| `MASSIVE_API_KEY` | Equity options context (HIP-3 paths); absent → CoinGlass-only / disclaimer. On the CoinAnk path this is the HIP-3 driver, with daily bars, earnings, narratives, and catalysts |
 | `HL_WEIGHT_PER_MINUTE` | HL REST weight budget (code default `600`; raise with dedicated egress) |
 | `FORCE_DRY_RUN` | `1` = force shadow regardless of DB `dry_run` |
 | `DRY_RUN_DEFAULT` | Present on some deploys; **not read** by current `config.ts` — prefer DB default + `FORCE_DRY_RUN` / `AI_AGENT_ALLOW_SHADOW_TOGGLE` on the API. Safe to leave unused or remove after verifying |
-| `COINGLASS_GLOBAL_MODE` | `1` = house key serves all agents (optional) |
+| `COINGLASS_GLOBAL_MODE` | `1` = house key serves all agents (optional). Leave unset when `ENABLE_COINANK=1` |
 | `CYCLE_MINUTES` / `AGENT_CONCURRENCY` / `MIN_HL_BALANCE_USD` | Optional tunables (defaults in `config.ts`) |
 | `MAKER_FIRST_OPEN` / `MAKER_WAIT_MS` | Opens post an ALO at the touch, wait (default 20s) polling order status, cancel, then IOC the remainder — saves the taker/maker fee gap on every maker-filled dollar. `0` = legacy IOC-only. Closes are always IOC |
 | `BOOK_GATE_ENABLED` / `BOOK_MIN_DEPTH_MULT` / `BOOK_MAX_SPREAD_BPS` | Live L2 gate on fresh opens (`skipped_thin_book`): spread over the per-tier cap (BTC/ETH 15 · mid 35 · thin 80 · HIP-3 100 bps, or the global override), size not fillable inside the 3% IOC ceiling, or taking-side depth within 50 bps < `BOOK_MIN_DEPTH_MULT` (default 3) × order. Applies to shadow agents too; never to closes |
@@ -111,13 +113,14 @@ Keep in sync: `frontend/src/lib/api.ts` → `AI_AGENT_LIMITS`, `backend/ai_agent
 
 | Limit | Value |
 |-------|------:|
-| Max symbols / agent | 20 |
+| Max symbols / agent | 1 (`MAX_SYMBOLS_PER_AGENT` in `ai_agents.py`; older multi-symbol rows still run) |
 | `max_capital_usd` | $100 – $10M |
 | Min HL equity to activate / stay live | $100 |
 | Optional `max_position_usd` floor | $20 |
 | Max leverage cap (further clamped per asset) | 50 |
 | Shared product slots / wallet | 2 (server-enforced; drafts do not count) |
 | Dedicated product slots / wallet | 10 (server-enforced; independent of Shared; drafts count — HL sub created at Create) |
+| Resident product slots / user | 5 (BuilderPad HD 2; independent of Shared/Dedicated; [RESIDENTS.md](./RESIDENTS.md)) |
 | Max active agents / user (`status=active`) | 12 |
 
 **Active trading book (global):** Home AccountCard + Portfolio / asset / trade chip rows (above Trading Activity / PortfolioTabs) set `activeTradingBook` in the app store (persisted). Selecting a Dedicated agent rebinds **reads + writes** — Home balance/positions, Portfolio tabs, QuickTrade, `asset/[coin]`, `trade/[coin]` — to that HL sub via device-agent + `vaultAddress`. Main stays the signer for setup / builder / rewards (do not retarget those). Dedicated funding sheet stays Main↔sub on AI Agents (not book-scoped order plumbing). **Profile / Deposit** show Main wallet ↔ Main HL bridge via REST (do not clear the active Dedicated book — that WS retarget churn blanked Trade Balance); DepositPanel ignores Dedicated stream snapshots for Trade Balance and keeps a sticky Main total across focus hops. The single account WS (`HyperliquidAccountStreamProvider`) **retargets** to Main or the selected sub (never a second account socket); snapshots clear synchronously on book switch and consumers ignore stream frames until `subscribedUser` matches the selected book (prevents Main↔Dedicated position flash). HIP-3 JIT `sendAsset` on Dedicated uses `fromSubAccount` = sub so only that book’s spot seeds the dex. Shared-AI conflict guard is Main-only. Cold start / logout / env flip resets to Main. Deep-link: `/portfolio?book=<agentId>`.
@@ -130,7 +133,7 @@ Guards that matter for forks: symbol-conflict with user/manual positions, peer S
 
 Under `/api` (Privy auth unless noted):
 
-- `POST/GET /ai-agents`
+- `POST/GET /ai-agents` (`GET` omits `mode=resident` unless `?include_resident=true` — those live on BuilderPad, not the phone list)
 - `POST /ai-agents/{id}/activate|pause|stop|revoke|dry-run`
 - `GET /ai-agents/stats`, `/ai-agents/positions`
 - `GET /ai-agents/{id}/decisions`, `/ai-agents/{id}/runs`

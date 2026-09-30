@@ -14,6 +14,7 @@
  * This is a DAILY bias signal (institutional demand day-over-day), not an
  * intraday trigger — the prompt section says so explicitly.
  */
+import { config } from '../config.js';
 import { getOrRefreshGlobalContext } from '../lib/globalCache.js';
 
 const BASE = 'https://open-api-v4.coinglass.com';
@@ -107,6 +108,7 @@ export async function getEtfFlowsContext(
   hlCoin: string,
   apiKey: string,
 ): Promise<EtfFlowsContext | null> {
+  if (config.coinankMode) return null;
   const sym = hlCoin.toUpperCase();
   const slug = ETF_SLUGS[sym];
   if (!slug) return null;

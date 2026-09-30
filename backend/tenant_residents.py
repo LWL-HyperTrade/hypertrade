@@ -23,7 +23,14 @@ VOICE_CHANNELS = ("trade", "craft", "macro", "vibe", "fun", "letter", "cast")
 
 # Avatar presets ship with the web bundle (web/public/resident/presets/{id}/).
 # Keep the ids here so a stale client cannot point the row at a missing folder.
-AVATAR_PRESETS = ("atlas", "yuna", "selene", "nova", "sol")
+AVATAR_PRESETS = ("atlas", "yuna", "selene", "nova", "sol", "julian", "kuri", "mika", "sebastian")
+# New drops ship poster.png. Yuna / Selene stay poster.webp.
+_PRESET_POSTER = {
+    "julian": "poster.png",
+    "kuri": "poster.png",
+    "mika": "poster.png",
+    "sebastian": "poster.png",
+}
 # Old id shipped as `luna`; keep accepting it and rewrite to `yuna`.
 _PRESET_ALIASES = {"luna": "yuna"}
 AVATAR_KINDS = ("preset", "vrm")
@@ -147,7 +154,7 @@ def normalize_avatar(raw: Any) -> Dict[str, Any]:
     return {
         "kind": "preset",
         "preset_id": preset,
-        "poster_url": poster or f"/resident/presets/{preset}/poster.webp",
+        "poster_url": poster or f"/resident/presets/{preset}/{_PRESET_POSTER.get(preset, 'poster.webp')}",
     }
 
 

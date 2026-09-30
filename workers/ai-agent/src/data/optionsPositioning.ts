@@ -104,6 +104,7 @@ async function produce(asset: string, apiKey: string): Promise<OptionsPositionin
 export async function getOptionsPositioning(
   hlCoin: string,
 ): Promise<OptionsPositioningContext | null> {
+  if (config.coinankMode) return null;
   const asset = hlCoin.toUpperCase();
   if (!supportsDeribitDvol(asset)) return null; // options markets = BTC/ETH only
   const key = config.coinglassHouseKey;

@@ -37,8 +37,20 @@ import {
 import { parseL2Book, type BookSnapshot, type TakeSide } from './bookSnapshot.js';
 import { liquidityTier } from './liquidityTier.js';
 import { resolveLiveOwnership, type HlFillLite } from './positionIdentity.js';
+import {
+  oidFromOrderResult,
+  recordTenantOrder,
+  type BuilderCode,
+  type ResidentTenant,
+} from '../lib/tenantBuilder.js';
 
 type Hex = `0x${string}`;
+
+/** Resident agents (docs/RESIDENTS.md): which app earns the fee on this agent's orders. */
+export interface ResidentAttribution {
+  tenant: ResidentTenant;
+  privyUserId: string;
+}
 
 /** Book age tolerated for PROMPT context (minutes are fine for an hourly brain). */
 export const BOOK_PROMPT_MAX_AGE_MS = 5 * 60_000;
@@ -554,16 +566,28 @@ export class HlAgentExecutionAdapter {
   private readonly allowedSymbols: Set<string>;
   /** HIP-3 dexes this agent's symbols touch (usually [] or ['xyz']). */
   private readonly tradedDexes: string[];
+  /** Builder code on every order: the resident's app, else the house builder. */
+  private readonly builder: BuilderCode;
+  private readonly attribution: ResidentAttribution | null;
 
   constructor(args: {
     agentPrivateKey: Hex;
     masterAddress: Hex;
     subaccountAddress?: Hex | null;
     agentConfig: AgentConfig;
+    /** Defaults to HL_BUILDER_ADDRESS / HL_BUILDER_FEE_TENTHS_BPS. */
+    builder?: BuilderCode;
+    /** When set, accepted orders are written to tenant_order_attributions. */
+    attribution?: ResidentAttribution | null;
   }) {
     this.masterAddress = args.masterAddress;
     this.subaccount = args.subaccountAddress ?? null;
     this.agentConfig = args.agentConfig;
+    this.builder = args.builder ?? {
+      b: config.builderAddress as Hex,
+      f: config.builderFeeTenthsBps,
+    };
+    this.attribution = args.attribution ?? null;
     this.allowedSymbols = new Set(args.agentConfig.symbols.map((s) => s.toUpperCase()));
     this.tradedDexes = [
       ...new Set(
@@ -583,6 +607,39 @@ export class HlAgentExecutionAdapter {
   /** The address whose clearinghouse state this agent trades against. */
   get tradingAddress(): Hex {
     return this.subaccount ?? this.masterAddress;
+  }
+
+  /**
+   * Fee attribution for a resident order (no-op for house agents). Fire and
+   * forget: HL already accepted the order; a failed insert only delays the
+   * app card, never the trade. Trigger orders (positionTpsl, size '0') carry no
+   * oid/notional at placement and are skipped — HL `referral.builderRewards`
+   * still counts their fills in the lifetime figure.
+   */
+  private attribute(
+    result: unknown,
+    order: {
+      cloid?: Hex | null;
+      symbol: string;
+      side: 'buy' | 'sell';
+      notionalUsd: number | null;
+      reduceOnly: boolean;
+    },
+  ): void {
+    if (!this.attribution) return;
+    const oid = oidFromOrderResult(result);
+    if (!order.cloid && oid == null) return;
+    void recordTenantOrder({
+      tenant: this.attribution.tenant,
+      privyUserId: this.attribution.privyUserId,
+      walletAddress: this.tradingAddress,
+      cloid: order.cloid ?? null,
+      oid,
+      symbol: order.symbol,
+      side: order.side,
+      notionalUsd: order.notionalUsd,
+      reduceOnly: order.reduceOnly,
+    }).catch(() => undefined);
   }
 
   private assertSymbolAllowed(symbol: string): void {
@@ -1005,11 +1062,20 @@ export class HlAgentExecutionAdapter {
             },
           ],
           grouping: 'na',
-          builder: { b: config.builderAddress as Hex, f: config.builderFeeTenthsBps },
+          builder: this.builder,
         }),
       );
       this.invalidateAfterWrite();
       last = interpretOrderResult(result);
+      if (last.ok) {
+        this.attribute(result, {
+          cloid: iocCloid,
+          symbol: params.symbol,
+          side,
+          notionalUsd: Number(s) * px,
+          reduceOnly: false,
+        });
+      }
       const bandTag = `slip=${(slip * 100).toFixed(2)}%${book ? ' book' : ' tier'}`;
       if (last.ok) {
         const legs = makerFilledUnits > 0 ? ` [maker ${makerFilledUnits} + ioc; ${makerNote}]` : makerNote ? ` [${makerNote}]` : '';
@@ -1083,7 +1149,7 @@ export class HlAgentExecutionAdapter {
             },
           ],
           grouping: 'na',
-          builder: { b: config.builderAddress as Hex, f: config.builderFeeTenthsBps },
+          builder: this.builder,
         }),
       );
     } catch (err) {
@@ -1102,6 +1168,13 @@ export class HlAgentExecutionAdapter {
     if ('error' in st) {
       return { filledUnits: 0, px, note: `alo rejected: ${String(st.error).slice(0, 120)}`, submitted: false };
     }
+    this.attribute(placed, {
+      cloid: args.cloid,
+      symbol: args.symbol,
+      side: args.isBuy ? 'buy' : 'sell',
+      notionalUsd: origUnits * px,
+      reduceOnly: false,
+    });
     if ('filled' in st) {
       const units = Number(st.filled?.totalSz ?? origUnits) || origUnits;
       return { filledUnits: units, px: Number(st.filled?.avgPx ?? px) || px, note: 'alo filled immediately', submitted: true };
@@ -1275,12 +1348,21 @@ export class HlAgentExecutionAdapter {
               },
             ],
             grouping: 'na',
-            builder: { b: config.builderAddress as Hex, f: config.builderFeeTenthsBps },
+            builder: this.builder,
           }),
         );
         this.invalidateAfterWrite();
         const interpreted = interpretOrderResult(result);
-        if (interpreted.ok) return interpreted;
+        if (interpreted.ok) {
+          this.attribute(result, {
+            cloid: null,
+            symbol,
+            side: isBuy ? 'buy' : 'sell',
+            notionalUsd: Number(s) * px,
+            reduceOnly: true,
+          });
+          return interpreted;
+        }
 
         lastDetail = interpreted.detail;
         // Soft reject (e.g. insufficient liquidity / reduce-only) — re-check
@@ -1504,7 +1586,7 @@ export class HlAgentExecutionAdapter {
           },
         ],
         grouping: 'positionTpsl',
-        builder: { b: config.builderAddress as Hex, f: config.builderFeeTenthsBps },
+        builder: this.builder,
       }),
     );
     this.invalidateAfterWrite();

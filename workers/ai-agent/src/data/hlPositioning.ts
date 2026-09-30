@@ -79,6 +79,7 @@ async function produce(apiKey: string): Promise<HlPositioningContext | null> {
 }
 
 export async function getHlPositioning(): Promise<HlPositioningContext | null> {
+  if (config.coinankMode) return null;
   const key = config.coinglassHouseKey;
   if (!key) return null; // Standard-only endpoints — house-key path only.
   return getOrRefreshGlobalContext<HlPositioningContext | null>({

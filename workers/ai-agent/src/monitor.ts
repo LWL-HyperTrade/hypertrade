@@ -37,6 +37,7 @@ import {
 import { callModel, houseKeyForProvider, parseJsonReply } from './ai/executor.js';
 import { planStops, type StopPlan } from './brain/computeStops.js';
 import { INTERVAL_MS as COINGLASS_INTERVAL_MS, type CoinglassMarketData } from './data/coinglass.js';
+import { getMassiveMacroBetaContext } from './data/equityDaily.js';
 import { getHlPositioning, type HlPositioningContext } from './data/hlPositioning.js';
 import { getHlWhalePositions, type WhalePos } from './data/hlWhales.js';
 import { getUpcomingCalendarEvents } from './data/macroCalendar.js';
@@ -69,6 +70,7 @@ import {
 import { assessBookForOpen, bookLogFields, type BookSnapshot } from './hl/bookSnapshot.js';
 import { SLIPPAGE_MAX } from './hl/slippage.js';
 import { recordSignalSnapshot } from './lib/signalSnapshots.js';
+import { builderFor, residentTenantFor } from './lib/tenantBuilder.js';
 import { decryptSecret } from './lib/crypto.js';
 import { emptySignals, type CycleHealthSignals } from './lib/agentHealth.js';
 import { CLOSE_REASON, classifyExternalCloseReason } from './lib/closeReason.js';
@@ -554,11 +556,18 @@ export async function executeAgentMonitoring(ctx: MonitorContext): Promise<Monit
   // created before the backend fix keep working.
   const rawKey = decryptSecret(agent.hl_agent_key_ciphertext);
   const agentPrivateKey = (rawKey.startsWith('0x') ? rawKey : `0x${rawKey}`) as `0x${string}`;
+  // Resident agents (docs/RESIDENTS.md) put their app's builder code on every
+  // order and attribute fills to that app. House agents keep the env builder.
+  const residentTenant = residentTenantFor(agent.id);
   const adapter = new HlAgentExecutionAdapter({
     agentPrivateKey,
     masterAddress: agent.hl_master_address,
     subaccountAddress: agent.hl_subaccount_address,
     agentConfig: agent.config,
+    builder: builderFor(agent.id),
+    attribution: residentTenant
+      ? { tenant: residentTenant, privyUserId: agent.privy_user_id }
+      : null,
   });
 
   let actionsExecuted = 0;
@@ -744,15 +753,19 @@ export async function executeAgentMonitoring(ctx: MonitorContext): Promise<Monit
   const marketMood = await getMarketMood().catch(() => null);
   const stickyNarratives = await getStickyNarrativesBoard().catch(() => null);
   const whalePositions = await getHlWhalePositions().catch(() => null);
-  const macroBeta = await getMacroBetaContext().catch(
-    (): MacroBetaContext => ({ sp500: null, qqq: null, dxy: null }),
-  );
+  const macroBeta = config.coinankMode
+    ? await getMassiveMacroBetaContext().catch(
+        (): MacroBetaContext => ({ sp500: null, qqq: null, dxy: null }),
+      )
+    : await getMacroBetaContext().catch(
+        (): MacroBetaContext => ({ sp500: null, qqq: null, dxy: null }),
+      );
 
   // Entitlement: in global mode (house CoinGlass Standard key) every agent is
   // entitled — no personal key needed. In BYOK mode the agent must hold a key
   // that passed this cycle's probe. Snapshot itself is shared by SYMBOL.
   let agentCgKey: string | null = null;
-  if (!config.coinglassGlobalMode && agent.coinglass_key_ciphertext) {
+  if (!config.coinankMode && !config.coinglassGlobalMode && agent.coinglass_key_ciphertext) {
     try {
       agentCgKey = decryptSecret(agent.coinglass_key_ciphertext);
     } catch {
@@ -760,6 +773,7 @@ export async function executeAgentMonitoring(ctx: MonitorContext): Promise<Monit
     }
   }
   const keyEntitled =
+    config.coinankMode ||
     config.coinglassGlobalMode ||
     (agentCgKey != null &&
       (ctx.validCoinglassKeys == null || ctx.validCoinglassKeys.has(agentCgKey)));
@@ -776,7 +790,7 @@ export async function executeAgentMonitoring(ctx: MonitorContext): Promise<Monit
       await logDecision({
         agentId: agent.id, runId, symbol: sym, type: 'skipped_no_data',
         decision: {
-          reason: config.coinglassGlobalMode
+          reason: config.coinankMode || config.coinglassGlobalMode
             ? 'market data unavailable this cycle'
             : !agentCgKey
               ? 'missing or invalid CoinGlass API key'

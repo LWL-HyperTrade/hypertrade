@@ -33,6 +33,7 @@ import {
   persistAgentHealth,
 } from './lib/agentHealth.js';
 import { getOpenPositions, logDecision } from './stores.js';
+import { refreshResidentTenants } from './lib/tenantBuilder.js';
 import {
   backfillSignalOutcomes,
   resetSignalSnapshotCycle,
@@ -235,6 +236,14 @@ async function cycle(): Promise<void> {
 
   const { marketData, validKeys, keysLabel } = await buildSymbolCache(agents);
   console.log(`[cycle] phase 1 done: ${marketData.size} series (symbol×interval), ${keysLabel}`);
+
+  // BuilderPad residents: which agents put an app's builder code on their
+  // orders this cycle (docs/RESIDENTS.md). Read-only; no-op without the table.
+  const residents = await refreshResidentTenants().catch((err) => {
+    console.warn('[residents] refresh failed:', err);
+    return 0;
+  });
+  if (residents > 0) console.log(`[cycle] ${residents} resident agent(s) on BuilderPad apps`);
 
   // Signal calibration data: fill forward returns for earlier snapshots from
   // the bars we just fetched, then open a fresh dedupe window for this

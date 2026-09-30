@@ -15,6 +15,7 @@
  */
 import { config } from '../config.js';
 import { getOrRefreshGlobalContext } from '../lib/globalCache.js';
+import { getCoinankWhalePositions } from './coinank.js';
 import { fmtUsd } from './etfFlows.js';
 
 /** Trimmed whale position (only what rendering needs — keeps the cache lean). */
@@ -70,6 +71,7 @@ async function fetchWhalePositions(apiKey: string): Promise<WhalePos[]> {
 }
 
 export async function getHlWhalePositions(): Promise<WhalePos[] | null> {
+  if (config.coinankMode) return getCoinankWhalePositions();
   const key = config.coinglassHouseKey;
   if (!key) return null;
   return getOrRefreshGlobalContext<WhalePos[]>({

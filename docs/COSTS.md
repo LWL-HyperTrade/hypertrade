@@ -43,7 +43,7 @@ Builds on Tier 1 (HL orders / builder fee). Extra runtime cost:
 |------|--------|
 | **Extra Railway service** | `workers/ai-agent` is a **separate** deploy (not the FastAPI process) |
 | **House LLM balances** | No fixed floor — start with ~$5–10 and top up; burn tracks agent activity / model choice |
-| **CoinGlass** (market series) | ~$379/mo class of plan (expensive); some builders look at alternatives (e.g. CoinAnk ~$208) |
+| **CoinGlass** (market series) | ~$379/mo class of plan (expensive). Optional alternative: `ENABLE_COINANK=1` uses CoinAnk Plan 2 (~$68/mo) for crypto and Massive for HIP-3 stocks. Plan 3 (~$208) is not required |
 | **Massive** (options context) | ~$29/mo class — optional; without it agents lean on CoinGlass / disclaimers |
 | **Vibe-coding / Cursor / etc.** | Your own iteration cost — not runtime |
 

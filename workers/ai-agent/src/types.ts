@@ -2,7 +2,8 @@
 
 import type { AgentHealth } from './lib/agentHealth.js';
 
-export type AgentMode = 'copilot' | 'dedicated';
+/** resident = BuilderPad resident EOA (HD 2); runs like copilot without manual trades. */
+export type AgentMode = 'copilot' | 'dedicated' | 'resident';
 export type AgentStatus = 'draft' | 'active' | 'paused' | 'stopped' | 'revoked';
 
 export interface AgentModelChoice {

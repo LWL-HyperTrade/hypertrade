@@ -38,6 +38,12 @@ _AGENT_KMS_KEY_HEX = os.getenv("AGENT_KMS_KEY", "").strip()
 # field. Keep unset to revert to BYOK. Mirror this env on backend AND worker.
 COINGLASS_GLOBAL_MODE = os.getenv("COINGLASS_GLOBAL_MODE", "").strip() == "1"
 
+# CoinAnk Plan 2 is the market-data path (worker reads the same env). Personal
+# CoinGlass keys are not required and are not probed. If this and
+# COINGLASS_GLOBAL_MODE are both set, CoinAnk wins — that pairing is a
+# misconfiguration, not a fallback. Mirror this env on backend AND worker.
+COINANK_MODE = os.getenv("ENABLE_COINANK", "").strip() == "1"
+
 # TEMPORARY testing default — see validate_agent_config. Flip to False to
 # restore the user-facing standard/aggressive choice.
 FORCE_AGGRESSIVE_RISK_PROFILE = True

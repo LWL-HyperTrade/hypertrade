@@ -130,6 +130,10 @@ export async function buildSymbolCache(agents: AgentRow[]): Promise<{
   /** Cycle log: house-key status in global mode, BYOK probe count otherwise. */
   keysLabel: string;
 }> {
+  if (config.coinankMode) {
+    const { buildCoinankSymbolCache } = await import('./coinankCache.js');
+    return buildCoinankSymbolCache(agents);
+  }
   const globalMode = config.coinglassGlobalMode;
   const marketData: MarketDataCache = new Map();
   const validKeys: ValidCoinglassKeys = new Set();

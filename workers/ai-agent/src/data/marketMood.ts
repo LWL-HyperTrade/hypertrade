@@ -248,6 +248,28 @@ async function produce(apiKey: string): Promise<MarketMoodContext> {
 }
 
 export async function getMarketMood(): Promise<MarketMoodContext | null> {
+  if (config.coinankMode) {
+    return getOrRefreshGlobalContext<MarketMoodContext | null>({
+      key: 'market_mood_defillama_v1',
+      ttlMs: TTL_MS,
+      produce: async () => {
+        const stables = await fetchStablecoinMcapDefiLlama();
+        const last = (a: number[]) => (a.length ? a[a.length - 1] : null);
+        const ago = (a: number[], n: number) => (a.length > n ? a[a.length - 1 - n] : null);
+        const scLast = last(stables);
+        const sc30 = ago(stables, 30);
+        if (scLast == null) throw new Error('market mood: stablecoin mcap empty');
+        return {
+          fearGreed: null,
+          fearGreedPrev7d: null,
+          stablecoinMcapUsd: scLast,
+          stablecoinMcap30dChangePct:
+            sc30 != null && sc30 > 0 ? ((scLast - sc30) / sc30) * 100 : null,
+          updatedAt: new Date().toISOString(),
+        };
+      },
+    });
+  }
   const key = config.coinglassHouseKey;
   if (!key) return null;
   return getOrRefreshGlobalContext<MarketMoodContext | null>({

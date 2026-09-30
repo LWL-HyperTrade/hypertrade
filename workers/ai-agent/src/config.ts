@@ -87,6 +87,15 @@ export const config = {
    */
   coinglassGlobalMode: process.env.COINGLASS_GLOBAL_MODE === '1',
   /**
+   * CoinAnk Plan 2 replaces CoinGlass for this process. Crypto series come
+   * from CoinAnk; HIP-3 uses Massive plus the non-CoinGlass caches. CoinGlass
+   * is not called, even if COINGLASS_HOUSE_KEY is still set. Unset keeps the
+   * existing CoinGlass path (global mode and BYOK) unchanged.
+   */
+  coinankMode: process.env.ENABLE_COINANK === '1',
+  /** Required when ENABLE_COINANK=1. Ignored otherwise. */
+  coinankApiKey: (process.env.COINANK_API_KEY ?? '').trim() || null,
+  /**
    * Massive (ex-Polygon.io) API key — listed US options for equity HIP-3
    * and GOLD/SILVER via GLD/SLV proxies (data/equityOptions.ts). Absent →
    * section renders a disclaimer,
