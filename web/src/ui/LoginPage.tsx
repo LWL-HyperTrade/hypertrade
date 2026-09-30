@@ -12,14 +12,13 @@ export function LoginPage() {
     authenticated,
     login,
     loginWithGoogle,
-    loginWithTikTok,
     googleBusy,
     loginError,
     ready,
     hydrating,
     privyConfigured,
   } = useWebAuth();
-  const [oauthKind, setOauthKind] = useState<'google' | 'tiktok' | null>(null);
+  const [oauthKind, setOauthKind] = useState<'google' | null>(null);
   const navigate = useNavigate();
   const brand = useTenantBrand();
 
@@ -86,19 +85,14 @@ export function LoginPage() {
           </button>
           <button
             type="button"
-            disabled={!ready || googleBusy}
-            onClick={() => {
-              setOauthKind('tiktok');
-              void loginWithTikTok().catch(() => undefined);
-            }}
-            className="btn-ghost flex w-full items-center justify-center gap-2 py-3 text-sm"
+            disabled
+            className="btn-ghost flex w-full cursor-not-allowed items-center justify-center gap-2 py-3 text-sm opacity-60"
           >
-            {googleBusy && oauthKind === 'tiktok' ? (
-              <span className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--text-3)]/30 border-t-[var(--text-1)]" />
-            ) : (
-              <IconTikTok size={18} />
-            )}
+            <IconTikTok size={18} />
             Continue with TikTok
+            <span className="rounded-md border border-stroke-weak px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-fg-subtle">
+              Coming soon
+            </span>
           </button>
           {loginError ? (
             <p className="rounded-xl bg-[#2a1216] px-3 py-2 text-xs text-[var(--danger)]">{loginError}</p>
