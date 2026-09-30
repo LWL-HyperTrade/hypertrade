@@ -54,8 +54,10 @@ export function WalletSheet({ compact, hideRobinhood, hideProfile, hlAddress }: 
     builderAddress,
     logout,
     getEthereumProvider,
+    getResidentEthereumProvider,
     getAccessToken,
     switchTradeChain,
+    switchResidentChain,
     authenticated,
     isEmbedded,
   } = useWebAuth();
@@ -103,13 +105,16 @@ export function WalletSheet({ compact, hideRobinhood, hideProfile, hlAddress }: 
     setFaceReady(false);
   }, [faceUrl]);
 
+  const bookAddress = ((hlAddress || address || '').trim() || null) as Hex | null;
+  const residentBook =
+    !!bookAddress && !!address && bookAddress.toLowerCase() !== address.toLowerCase();
   const walletQ = useQuery({
-    queryKey: ['arb-usdc', address],
-    enabled: !!address && (open || !compact),
-    queryFn: () => fetchArbUsdc(address as Hex),
+    queryKey: ['arb-usdc', bookAddress],
+    enabled: !!bookAddress && (open || !compact),
+    queryFn: () => fetchArbUsdc(bookAddress as Hex),
     refetchInterval: 15_000,
   });
-  const hlBalanceAddress = hlAddress || address;
+  const hlBalanceAddress = bookAddress;
   const tradeQ = useQuery({
     queryKey: ['hl', 'clearinghouse', hlBalanceAddress],
     enabled: !!hlBalanceAddress,
@@ -117,12 +122,12 @@ export function WalletSheet({ compact, hideRobinhood, hideProfile, hlAddress }: 
     refetchInterval: 8_000,
   });
   const limitQ = useQuery({
-    queryKey: ['wallet-transfer-limit', address],
-    enabled: authenticated && !!address && open && withdrawOpen,
+    queryKey: ['wallet-transfer-limit', bookAddress],
+    enabled: authenticated && !!bookAddress && open && withdrawOpen,
     queryFn: async () => {
       const token = await getAccessToken();
       if (!token) throw new Error('Sign in again');
-      return fetchTransferLimit(address!, token);
+      return fetchTransferLimit(bookAddress!, token);
     },
     staleTime: 15_000,
   });
@@ -206,9 +211,9 @@ export function WalletSheet({ compact, hideRobinhood, hideProfile, hlAddress }: 
                 : null;
 
   const copy = async () => {
-    if (!address) return;
+    if (!bookAddress) return;
     try {
-      await navigator.clipboard.writeText(address);
+      await navigator.clipboard.writeText(bookAddress);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
     } catch {
@@ -224,8 +229,12 @@ export function WalletSheet({ compact, hideRobinhood, hideProfile, hlAddress }: 
     ensureTradeWalletChain({
       chainId: ARBITRUM_CHAIN_ID,
       chainName: 'Arbitrum',
-      switchChain: switchTradeChain,
-      getProvider: getEthereumProvider,
+      switchChain: residentBook
+        ? (chainId) => switchResidentChain(chainId, bookAddress!)
+        : switchTradeChain,
+      getProvider: residentBook
+        ? () => getResidentEthereumProvider(bookAddress!)
+        : getEthereumProvider,
     });
 
   const moveToTrade = async () => {
@@ -233,8 +242,8 @@ export function WalletSheet({ compact, hideRobinhood, hideProfile, hlAddress }: 
     setOk(null);
     setTxHash(null);
     setAmountTouched(true);
-    if (!address) return;
-    if (builderAddress && address.toLowerCase() === builderAddress.toLowerCase()) {
+    if (!bookAddress) return;
+    if (builderAddress && bookAddress.toLowerCase() === builderAddress.toLowerCase()) {
       setError('Trade wallet required — fund the builder from Home.');
       return;
     }
@@ -261,18 +270,18 @@ export function WalletSheet({ compact, hideRobinhood, hideProfile, hlAddress }: 
       if (!token) throw new Error('Sign in again');
       const permit = await signBridge2Permit({
         provider,
-        user: address,
+        user: bookAddress,
         amountUsdc: amount.trim(),
       });
-      const res = await depositWithPermit({ user: address, ...permit }, token);
+      const res = await depositWithPermit({ user: bookAddress, ...permit }, token);
       const hash = res?.txHash;
       if (!hash) throw new Error('Deposit did not return a transaction');
       setTxHash(hash.startsWith('0x') ? hash : `0x${hash}`);
       setOk('Deposit submitted — trade balance updates shortly');
       setAmount('');
       setAmountTouched(false);
-      void qc.invalidateQueries({ queryKey: ['arb-usdc', address] });
-      void qc.invalidateQueries({ queryKey: ['hl', 'clearinghouse', address] });
+      void qc.invalidateQueries({ queryKey: ['arb-usdc', bookAddress] });
+      void qc.invalidateQueries({ queryKey: ['hl', 'clearinghouse', bookAddress] });
     } catch (e) {
       if (isWalletUserRejectedRequest(e)) {
         setError('Wallet request was rejected.');
@@ -289,8 +298,8 @@ export function WalletSheet({ compact, hideRobinhood, hideProfile, hlAddress }: 
     setOk(null);
     setTxHash(null);
     setAmountTouched(true);
-    if (!address) return;
-    if (builderAddress && address.toLowerCase() === builderAddress.toLowerCase()) {
+    if (!bookAddress) return;
+    if (builderAddress && bookAddress.toLowerCase() === builderAddress.toLowerCase()) {
       setError('Trade wallet required — fund the builder from Home.');
       return;
     }
@@ -316,8 +325,8 @@ export function WalletSheet({ compact, hideRobinhood, hideProfile, hlAddress }: 
       const amtStr = amt.toFixed(2);
       await withdrawFromHyperliquid({
         provider,
-        userAddress: address as Hex,
-        destination: address as Hex,
+        userAddress: bookAddress,
+        destination: bookAddress,
         amountUsd: amtStr,
       });
       setOk(
@@ -325,8 +334,8 @@ export function WalletSheet({ compact, hideRobinhood, hideProfile, hlAddress }: 
       );
       setAmount('');
       setAmountTouched(false);
-      void qc.invalidateQueries({ queryKey: ['arb-usdc', address] });
-      void qc.invalidateQueries({ queryKey: ['hl', 'clearinghouse', address] });
+      void qc.invalidateQueries({ queryKey: ['arb-usdc', bookAddress] });
+      void qc.invalidateQueries({ queryKey: ['hl', 'clearinghouse', bookAddress] });
     } catch (e) {
       if (isWalletUserRejectedRequest(e)) {
         setError('Wallet request was rejected.');
@@ -344,13 +353,13 @@ export function WalletSheet({ compact, hideRobinhood, hideProfile, hlAddress }: 
     setOk(null);
     setTxHash(null);
     setAmountTouched(true);
-    if (!address) return;
+    if (!bookAddress) return;
     const dest = withdrawDest.trim();
     if (!isAddress(dest)) {
       setError('Enter a valid destination address.');
       return;
     }
-    if (dest.toLowerCase() === address.toLowerCase()) {
+    if (dest.toLowerCase() === bookAddress.toLowerCase()) {
       setError('Destination must be a different wallet.');
       return;
     }
@@ -381,7 +390,7 @@ export function WalletSheet({ compact, hideRobinhood, hideProfile, hlAddress }: 
       if (!token) throw new Error('Sign in again');
       const { txHash: hash } = await withdrawArbUsdcToExternal({
         provider,
-        user: address as Hex,
+        user: bookAddress,
         destination: dest,
         amountUsdc: amount.trim(),
         accessToken: token,
@@ -391,8 +400,8 @@ export function WalletSheet({ compact, hideRobinhood, hideProfile, hlAddress }: 
       setAmount('');
       setWithdrawDest('');
       setAmountTouched(false);
-      void qc.invalidateQueries({ queryKey: ['arb-usdc', address] });
-      void qc.invalidateQueries({ queryKey: ['wallet-transfer-limit', address] });
+      void qc.invalidateQueries({ queryKey: ['arb-usdc', bookAddress] });
+      void qc.invalidateQueries({ queryKey: ['wallet-transfer-limit', bookAddress] });
     } catch (e) {
       if (isWalletUserRejectedRequest(e)) {
         setError('Wallet request was rejected.');
@@ -406,7 +415,7 @@ export function WalletSheet({ compact, hideRobinhood, hideProfile, hlAddress }: 
 
   const tradeLabel = tradeQ.isLoading ? null : formatUsd(tradeQ.data?.accountValue ?? 0);
   const canSubmit = withdrawOpen
-    ? !!address &&
+    ? !!bookAddress &&
       !busy &&
       isAddress(withdrawDest.trim()) &&
       amt != null &&
@@ -415,13 +424,13 @@ export function WalletSheet({ compact, hideRobinhood, hideProfile, hlAddress }: 
       !overWallet &&
       !(limitQ.data && limitQ.data.remaining === 0)
     : toWallet
-      ? !!address &&
+      ? !!bookAddress &&
         !busy &&
         amt != null &&
         amt >= MIN_HL_WITHDRAW_USDC &&
         !tooManyDecimals &&
         !overTrade
-      : !!address &&
+      : !!bookAddress &&
         !busy &&
         amt != null &&
         amt >= MIN_BRIDGE2_USDC &&
@@ -578,9 +587,9 @@ export function WalletSheet({ compact, hideRobinhood, hideProfile, hlAddress }: 
               <div className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-[0.08em] text-fg-subtle">
                 <img src={arbIcon} alt="" className="h-3.5 w-3.5 rounded-full" />
                 <span>Deposit address · Arbitrum</span>
-                {address ? (
+                {bookAddress ? (
                   <a
-                    href={`https://arbiscan.io/address/${address}`}
+                    href={`https://arbiscan.io/address/${bookAddress}`}
                     target="_blank"
                     rel="noreferrer"
                     aria-label="View on Arbiscan"
@@ -592,9 +601,9 @@ export function WalletSheet({ compact, hideRobinhood, hideProfile, hlAddress }: 
               </div>
               <div className="mt-1.5 flex min-w-0 items-center gap-2">
                 <div className="min-w-0 flex-1 break-all font-mono text-[12px]">
-                  {address || 'Waiting for wallet…'}
+                  {bookAddress || 'Waiting for wallet…'}
                 </div>
-                {address ? (
+                {bookAddress ? (
                   <div className="flex shrink-0 items-center gap-1.5">
                     <button
                       type="button"
@@ -810,7 +819,7 @@ export function WalletSheet({ compact, hideRobinhood, hideProfile, hlAddress }: 
             >
               Sign out
             </button>
-            {qrOpen && address ? (
+            {qrOpen && bookAddress ? (
               <div
                 className="absolute inset-0 z-10 flex items-center justify-center bg-black/55 p-4"
                 onClick={(e) => {
@@ -826,10 +835,10 @@ export function WalletSheet({ compact, hideRobinhood, hideProfile, hlAddress }: 
                   <div
                     className="mx-auto mt-3 w-[180px] overflow-hidden rounded-xl bg-white p-2 [&_svg]:h-full [&_svg]:w-full"
                     dangerouslySetInnerHTML={{
-                      __html: renderSVG(address, { ecc: 'M', pixelSize: 6, border: 2 }),
+                      __html: renderSVG(bookAddress, { ecc: 'M', pixelSize: 6, border: 2 }),
                     }}
                   />
-                  <p className="mt-2 break-all font-mono text-[10px] leading-4 text-fg-muted">{address}</p>
+                  <p className="mt-2 break-all font-mono text-[10px] leading-4 text-fg-muted">{bookAddress}</p>
                   <button
                     type="button"
                     className="mt-3 inline-flex items-center gap-1 text-[12px] font-bold text-fg-subtle hover:text-fg"

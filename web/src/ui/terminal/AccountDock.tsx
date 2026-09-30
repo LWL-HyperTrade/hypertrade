@@ -142,7 +142,7 @@ export function AccountDock({
   residentBuilderAddress = null,
   residentCloidPrefix = 'bp',
 }: Props) {
-  const { authenticated, address: authAddress, getEthereumProvider, getBuilderEthereumProvider, switchBuilderChain } =
+  const { authenticated, address: authAddress, getEthereumProvider, getResidentEthereumProvider, switchResidentChain, getBuilderEthereumProvider, switchBuilderChain } =
     useWebAuth();
   const qc = useQueryClient();
   const [tab, setTab] = useState<Tab>('positions');
@@ -445,15 +445,25 @@ export function AccountDock({
         ) : (
           <PortfolioTable
             clearing={clearing}
-            canTrade={authenticated && !!authAddress}
-            getEthereumProvider={getEthereumProvider}
-            userAddress={(authAddress as Hex) ?? null}
+            canTrade={authenticated && !!(address || authAddress)}
+            getEthereumProvider={
+              address && authAddress && address.toLowerCase() !== authAddress.toLowerCase()
+                ? () => getResidentEthereumProvider(address)
+                : getEthereumProvider
+            }
+            userAddress={((address || authAddress) as Hex) ?? null}
             spotDusting={spotDusting}
             sendToFriend
             appName={appName}
+            switchChain={
+              address && authAddress && address.toLowerCase() !== authAddress.toLowerCase()
+                ? (chainId) => switchResidentChain(chainId, address)
+                : undefined
+            }
             onDone={() => {
-              if (!authAddress) return;
-              void qc.invalidateQueries({ queryKey: ['hl', 'clearinghouse', authAddress] });
+              const who = address || authAddress;
+              if (!who) return;
+              void qc.invalidateQueries({ queryKey: ['hl', 'clearinghouse', who] });
             }}
           />
         )}

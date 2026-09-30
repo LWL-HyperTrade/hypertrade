@@ -64,6 +64,8 @@ export type WebAuth = {
    * `approveAgent` / `approveBuilderFee` for resident AI agents. Never HD 0 / HD 1.
    */
   getResidentEthereumProvider: (address: string) => Promise<Eip1193Provider | null>;
+  /** Switch the resident wallet (HD 2) before an Arbitrum permit or withdraw. */
+  switchResidentChain: (chainId: number, address: string) => Promise<void>;
   /** Trade wallet is a Privy embedded EOA. */
   isEmbedded: boolean;
   privyConfigured: boolean;
@@ -354,6 +356,9 @@ const GUEST: WebAuth = {
   },
   getBuilderEthereumProvider: async () => null,
   getResidentEthereumProvider: async () => null,
+  switchResidentChain: async () => {
+    throw new Error('Sign in first');
+  },
   isEmbedded: false,
   privyConfigured: false,
   socials: NO_SOCIALS,
@@ -595,6 +600,22 @@ function PrivyAuthBridge({ children }: { children: ReactNode }) {
         );
         if (!w || typeof w.getEthereumProvider !== 'function') return null;
         return (await w.getEthereumProvider()) as Eip1193Provider;
+      },
+      switchResidentChain: async (chainId: number, want: string) => {
+        const target = (want || '').toLowerCase();
+        if (!target) throw new Error('Resident wallet is not ready');
+        const trade = (addressRef.current || '').toLowerCase();
+        const builder = (builderAddressRef.current || '').toLowerCase();
+        if (target === trade || target === builder) {
+          throw new Error('Refusing to switch the trade wallet');
+        }
+        const w = walletsRef.current.find(
+          (row) => row.address.toLowerCase() === target && row.walletClientType === 'privy',
+        );
+        if (!w || typeof w.switchChain !== 'function') {
+          throw new Error('Resident wallet is not ready');
+        }
+        await w.switchChain(chainId);
       },
       isEmbedded: wallet?.walletClientType === 'privy',
       privyConfigured: true,
