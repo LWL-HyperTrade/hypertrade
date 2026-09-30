@@ -33,6 +33,8 @@ type Props = {
   hideRobinhood?: boolean;
   /** Drop the profile face chip (saves header space on creator mobile). */
   hideProfile?: boolean;
+  /** Header chip balance. Defaults to the signed-in wallet. */
+  hlAddress?: string | null;
 };
 
 const USDC_DECIMALS = 6;
@@ -45,7 +47,7 @@ function parseAmount(raw: string): number | null {
   return amt;
 }
 
-export function WalletSheet({ compact, hideRobinhood, hideProfile }: Props) {
+export function WalletSheet({ compact, hideRobinhood, hideProfile, hlAddress }: Props) {
   const {
     email,
     address,
@@ -55,6 +57,7 @@ export function WalletSheet({ compact, hideRobinhood, hideProfile }: Props) {
     getAccessToken,
     switchTradeChain,
     authenticated,
+    isEmbedded,
   } = useWebAuth();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -106,10 +109,11 @@ export function WalletSheet({ compact, hideRobinhood, hideProfile }: Props) {
     queryFn: () => fetchArbUsdc(address as Hex),
     refetchInterval: 15_000,
   });
+  const hlBalanceAddress = hlAddress || address;
   const tradeQ = useQuery({
-    queryKey: ['hl', 'clearinghouse', address],
-    enabled: !!address,
-    queryFn: () => fetchClearinghouse(address!),
+    queryKey: ['hl', 'clearinghouse', hlBalanceAddress],
+    enabled: !!hlBalanceAddress,
+    queryFn: () => fetchClearinghouse(hlBalanceAddress!),
     refetchInterval: 8_000,
   });
   const limitQ = useQuery({
@@ -742,7 +746,9 @@ export function WalletSheet({ compact, hideRobinhood, hideProfile }: Props) {
               className="btn-primary btn-sm mt-2 w-full py-2.5 text-[13px]"
             >
               {busy
-                ? 'Confirm in wallet…'
+                ? isEmbedded
+                  ? 'Confirming'
+                  : 'Confirm in wallet…'
                 : withdrawOpen
                   ? 'Withdraw to External Wallet'
                   : toWallet

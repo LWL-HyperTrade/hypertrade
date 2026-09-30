@@ -622,7 +622,7 @@ export interface AiAgentHealth {
 export interface AiAgentView {
   id: string;
   name: string;
-  mode: 'copilot' | 'dedicated';
+  mode: 'copilot' | 'dedicated' | 'resident';
   status: 'draft' | 'active' | 'paused' | 'stopped' | 'revoked';
   dryRun: boolean;
   hlMasterAddress: string;
@@ -682,13 +682,17 @@ export interface AiAgentsList {
   agents: AiAgentView[];
   /** True when the house CoinGlass key serves market data for all agents (no personal key needed). */
   coinglassGlobalMode: boolean;
+  /** True when CoinAnk replaces CoinGlass. Personal CoinGlass keys are not used. */
+  coinankMode: boolean;
 }
 
 export async function listAiAgents(accessToken: string): Promise<AiAgentsList> {
   const res = await api.get('/ai-agents', withAuth(accessToken));
+  const agents = ((res.data.agents ?? []) as AiAgentView[]).filter((a) => a.mode !== 'resident');
   return {
-    agents: res.data.agents ?? [],
+    agents,
     coinglassGlobalMode: res.data.coinglassGlobalMode === true,
+    coinankMode: res.data.coinankMode === true,
   };
 }
 

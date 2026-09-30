@@ -588,6 +588,7 @@ export default function AiAgentsScreen() {
   const [coinglassReplaceMode, setCoinglassReplaceMode] = useState(false);
   /** Server flag: house CoinGlass key serves everyone → hide the key step. */
   const [cgGlobalMode, setCgGlobalMode] = useState(false);
+  const [coinankMode, setCoinankMode] = useState(false);
   const [dedicatedMode, setDedicatedMode] = useState(false);
   const [dedicatedEligibility, setDedicatedEligibility] = useState<DedicatedEligibility>({ state: 'checking' });
   const [creating, setCreating] = useState(false);
@@ -912,6 +913,7 @@ export default function AiAgentsScreen() {
       const list = await listAiAgents(token);
       setAgents(list.agents);
       setCgGlobalMode(list.coinglassGlobalMode);
+      setCoinankMode(list.coinankMode);
       void queryClient.invalidateQueries({ queryKey: ['ai-agent-stats'] });
       void queryClient.invalidateQueries({ queryKey: ['ai-agent-hl-summary'] });
     } catch (e) {
@@ -1155,7 +1157,7 @@ export default function AiAgentsScreen() {
           : t('aiAgents.invalidMaxPosition', 'Max per position must be a positive amount no larger than the total.'));
       return;
     }
-    if (!cgGlobalMode && !coinglassKey.trim()) {
+    if (!cgGlobalMode && !coinankMode && !coinglassKey.trim()) {
       showInfo(t('aiAgents.keysRequired'), t('aiAgents.keysRequiredDesc'));
       return;
     }
@@ -1281,7 +1283,7 @@ export default function AiAgentsScreen() {
     } finally {
       setCreating(false);
     }
-  }, [getAccessToken, address, wallet, isExternal, symbols, selectableAssets, budgetText, fundingText, maxPositionText, leverageText, name, modelIdx, marginMode, riskProfile, horizon, direction, mandate, coinglassKey, cgGlobalMode, dedicatedMode, closeForm, refresh, showInfo, t, findSymbolOverlap, findManualOpenConflict, isEditingDraft, sharedSlotsFull, dedicatedSlotsFull, sharedSlotsUsed, sharedSlotsMax, dedicatedSlotsUsed, dedicatedSlotsMax]);
+  }, [getAccessToken, address, wallet, isExternal, symbols, selectableAssets, budgetText, fundingText, maxPositionText, leverageText, name, modelIdx, marginMode, riskProfile, horizon, direction, mandate, coinglassKey, cgGlobalMode, coinankMode, dedicatedMode, closeForm, refresh, showInfo, t, findSymbolOverlap, findManualOpenConflict, isEditingDraft, sharedSlotsFull, dedicatedSlotsFull, sharedSlotsUsed, sharedSlotsMax, dedicatedSlotsUsed, dedicatedSlotsMax]);
 
   const handleSaveDraft = useCallback(async () => {
     const token = await getAccessToken();
@@ -2506,8 +2508,9 @@ export default function AiAgentsScreen() {
         notionalCeilingNum > 0 &&
         maxPositionNum! > notionalCeilingNum));
 
+  const hideDataKey = cgGlobalMode || coinankMode;
   const coinglassOk =
-    cgGlobalMode ||
+    hideDataKey ||
     (isEditingDraft && !coinglassReplaceMode
       ? true
       : coinglassKey.trim().length > 0);
@@ -3879,7 +3882,7 @@ export default function AiAgentsScreen() {
               </>
             ) : null}
 
-            {cgGlobalMode ? null : (
+            {hideDataKey ? null : (
               <>
                 <FieldLabel
                   label={t('aiAgents.dataKeyLabel')}

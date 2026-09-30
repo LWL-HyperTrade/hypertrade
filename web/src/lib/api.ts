@@ -8,6 +8,12 @@ import type {
   TenantAttributionSummary,
   TenantPublic,
 } from './tenants';
+import type {
+  AiAgentConfig,
+  AiAgentDecision,
+  AiAgentView,
+  TenantResidentPayload,
+} from './residents';
 
 function unwrapError(payload: unknown, fallback: string): string {
   const detail = (payload as { detail?: unknown })?.detail;
@@ -188,6 +194,121 @@ export async function registerBuilderWallets(
     body: JSON.stringify(body),
   });
   return data.wallets;
+}
+
+// ── BuilderPad Residents (docs/RESIDENTS.md) ────────────────────────────────
+
+/** Persist the HD 2 resident EOA on the builder-wallet row. Idempotent per address. */
+export async function registerResidentWallet(
+  body: { resident_wallet: string; resident_wallet_index?: number },
+  token: string,
+): Promise<BuilderWallets> {
+  const data = await request<{ wallets: BuilderWallets }>('/tenants/me/wallets/resident', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(body),
+  });
+  return data.wallets;
+}
+
+export async function fetchTenantResident(slug: string): Promise<TenantResidentPayload> {
+  return request<TenantResidentPayload>(`/tenants/${encodeURIComponent(slug)}/resident`);
+}
+
+export async function attachTenantResident(
+  slug: string,
+  agentId: string,
+  token: string,
+): Promise<{ ok: boolean; agent_ids: string[] }> {
+  return request(`/tenants/${encodeURIComponent(slug)}/residents`, {
+    method: 'POST',
+    token,
+    body: JSON.stringify({ agent_id: agentId }),
+  });
+}
+
+export async function detachTenantResident(
+  slug: string,
+  agentId: string,
+  token: string,
+): Promise<{ ok: boolean; agent_ids: string[] }> {
+  return request(`/tenants/${encodeURIComponent(slug)}/residents/${encodeURIComponent(agentId)}`, {
+    method: 'DELETE',
+    token,
+  });
+}
+
+// ── AI agents control plane (same routes the mobile app uses) ───────────────
+
+export async function listAiAgents(
+  token: string,
+  opts?: { includeResident?: boolean },
+): Promise<AiAgentView[]> {
+  const q = opts?.includeResident ? '?include_resident=true' : '';
+  const data = await request<{ agents: AiAgentView[] }>(`/ai-agents${q}`, { token });
+  return data.agents ?? [];
+}
+
+export async function createResidentAgent(
+  body: { name: string; hlMasterAddress: string; config: AiAgentConfig },
+  token: string,
+): Promise<AiAgentView> {
+  const data = await request<{ agent: AiAgentView }>('/ai-agents', {
+    method: 'POST',
+    token,
+    body: JSON.stringify({ ...body, mode: 'resident', tradingEnv: 'mainnet' }),
+  });
+  return data.agent;
+}
+
+/** Display name only. Live and stopped agents accept this; trading settings stay draft-only. */
+export async function renameAiAgent(agentId: string, name: string, token: string): Promise<AiAgentView> {
+  const data = await request<{ agent: AiAgentView }>(`/ai-agents/${encodeURIComponent(agentId)}`, {
+    method: 'PATCH',
+    token,
+    body: JSON.stringify({ name }),
+  });
+  return data.agent;
+}
+
+export async function activateAiAgent(agentId: string, token: string): Promise<AiAgentView> {
+  const data = await request<{ agent: AiAgentView }>(`/ai-agents/${encodeURIComponent(agentId)}/activate`, {
+    method: 'POST',
+    token,
+    body: '{}',
+  });
+  return data.agent;
+}
+
+export async function pauseAiAgent(agentId: string, token: string): Promise<void> {
+  await request(`/ai-agents/${encodeURIComponent(agentId)}/pause`, { method: 'POST', token, body: '{}' });
+}
+
+export async function stopAiAgent(agentId: string, token: string): Promise<void> {
+  await request(`/ai-agents/${encodeURIComponent(agentId)}/stop`, { method: 'POST', token, body: '{}' });
+}
+
+export async function revokeAiAgent(
+  agentId: string,
+  token: string,
+): Promise<{ ok: boolean; stillApprovedOnHl: boolean | null }> {
+  return request(`/ai-agents/${encodeURIComponent(agentId)}/revoke`, { method: 'POST', token, body: '{}' });
+}
+
+export async function deleteAiAgent(agentId: string, token: string): Promise<void> {
+  await request(`/ai-agents/${encodeURIComponent(agentId)}`, { method: 'DELETE', token });
+}
+
+export async function fetchAiAgentDecisions(
+  agentId: string,
+  token: string,
+  limit = 20,
+): Promise<AiAgentDecision[]> {
+  const data = await request<{ decisions: AiAgentDecision[] }>(
+    `/ai-agents/${encodeURIComponent(agentId)}/decisions?limit=${limit}`,
+    { token },
+  );
+  return data.decisions ?? [];
 }
 
 export async function listMyTenants(token: string): Promise<TenantPublic[]> {

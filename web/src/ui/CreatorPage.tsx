@@ -55,6 +55,7 @@ import { Sparkline } from './Sparkline';
 import { socialItems } from './socials';
 import { useSyncTenantTwitch } from './StreamDeskCard';
 import { PartnerMarquee } from './PartnerMarquee';
+import { ResidentSection } from './resident/ResidentSection';
 import { CreatorPageSkeleton } from './skeleton';
 import {
   IconBolt,
@@ -233,10 +234,14 @@ function CreatorBody({
   const about = tenant.description.trim();
   const marketCount = markets.length || tenant.catalog.length;
 
-  // Deep links like /#token from the header when arriving from /terms.
+  // My Projects (and other long pages) keep their scroll offset across client
+  // navigations. Land at the top unless the URL asks for a section.
   useEffect(() => {
     const id = hash.replace(/^#/, '');
-    if (!id) return;
+    if (!id) {
+      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+      return;
+    }
     const t = window.setTimeout(() => {
       document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 60);
@@ -259,6 +264,8 @@ function CreatorBody({
         getAccessToken={getAccessToken}
       />
       <PartnerMarquee />
+
+      {tenant.resident ? <ResidentSection tenant={tenant} /> : null}
 
       <AppSection
         tenant={tenant}

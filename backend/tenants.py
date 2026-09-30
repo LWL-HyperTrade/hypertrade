@@ -235,8 +235,6 @@ def privy_verified_socials(linked_accounts: Iterable[Any]) -> Dict[str, str]:
             continue
         atype = str(acct.get("type") or "").lower()
         username = _handle(acct.get("username"))
-        name = _handle(acct.get("name"))
-        email_local = _handle(str(acct.get("email") or "").split("@")[0])
         if atype == "twitter_oauth" and username:
             out["twitter"] = username
         elif atype == "telegram" and username:
@@ -247,8 +245,6 @@ def privy_verified_socials(linked_accounts: Iterable[Any]) -> Dict[str, str]:
             out["tiktok"] = username
         elif atype == "instagram_oauth" and username:
             out["instagram"] = username
-        elif atype == "google_oauth":
-            out["youtube"] = username or name or email_local
         elif "twitch" in atype:
             out["twitch"] = twitch_login(
                 acct.get("username"),

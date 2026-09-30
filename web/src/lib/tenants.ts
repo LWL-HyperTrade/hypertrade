@@ -1,3 +1,5 @@
+import type { TenantResidentSummary } from './residents';
+
 export const RESERVED_SLUGS = new Set([
   'about', 'admin', 'ai-agents', 'ai-agents-faq', 'api', 'app', 'apps', 'asset', 'assets',
   'bank', 'bank-faq', 'bank-guest', 'bank-notifications', 'bank-statement', 'blog',
@@ -194,6 +196,8 @@ export type TenantPublic = {
   stream?: { twitch: boolean };
   /** Login-level identity across all this creator's live apps. `null` = no verified social → stays anonymous. */
   creator?: TenantCreator | null;
+  /** AI resident living on this app (docs/RESIDENTS.md). `null` = human app. */
+  resident?: TenantResidentSummary | null;
 };
 
 export type TenantCreatorApp = {
@@ -296,6 +300,9 @@ export type PatchTenantBody = Omit<Partial<CreateTenantBody>, 'status'> & {
   status?: TenantPublic['status'];
   slug?: string;
   stream?: { twitch: boolean };
+  /** Resident character — live-editable (docs/RESIDENTS.md). */
+  persona?: Record<string, unknown>;
+  avatar?: Record<string, unknown>;
 };
 
 export type BuilderWallets = {
@@ -315,6 +322,9 @@ export type BuilderWallets = {
   funded_at?: string | null;
   created_at?: string;
   updated_at?: string;
+  /** HD 2 — resident AI agents trade from here. Null until provisioned. */
+  resident_wallet?: string | null;
+  resident_wallet_index?: number | null;
   hl?: {
     perp_equity_usd: number;
     abstraction_mode: string | null;
@@ -330,6 +340,7 @@ export type AssetRow = {
   category: string;
   isSpotOnly?: boolean;
   isHip3?: boolean;
+  isPreIpo?: boolean;
   growthMode?: boolean | string | null;
   deployerFeeScale?: number | string | null;
   markPx?: string | null;

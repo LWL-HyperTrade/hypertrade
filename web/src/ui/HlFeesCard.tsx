@@ -17,10 +17,11 @@ import { IconChart } from './icons';
  */
 export function HlFeesCard({
   builder,
-  lifetimeUsd,
+  appUsd,
 }: {
   builder: string;
-  lifetimeUsd: number;
+  /** Fees attributed to this app, not the builder wallet's lifetime. */
+  appUsd: number;
 }) {
   const { getBuilderEthereumProvider } = useWebAuth();
   const qc = useQueryClient();
@@ -36,7 +37,6 @@ export function HlFeesCard({
   });
 
   const unclaimed = rewards.data?.unclaimed ?? 0;
-  const lifetime = rewards.data?.builder || lifetimeUsd;
   const canClaim = unclaimed >= HL_CLAIM_MIN_USD;
 
   const claim = async () => {
@@ -60,25 +60,17 @@ export function HlFeesCard({
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stroke-weak px-4 py-2.5">
-      <div className="min-w-0 text-[12px] text-fg-subtle">
-        <div className="flex items-center gap-1.5">
-          <span
-            className="inline-flex text-brand"
-            title="Hyperliquid perps"
-            aria-label="Hyperliquid perps"
-          >
-            <IconChart size={12} />
-          </span>
-          <span className="rounded-full bg-fill-weak px-2 py-0.5 text-[10px] font-extrabold uppercase text-fg-muted">
-            builder
-          </span>
+      <div className="min-w-0">
+        <div className="flex items-center gap-1.5 text-[12px] font-extrabold text-fg">
+          <IconChart size={14} className="text-brand" />
+          Builder fees
         </div>
-        <div className="mt-0.5 tabular">
+        <p className="mt-0.5 text-[11px] text-fg-subtle tabular">
           {rewards.isError ? (
             <span className="text-error">Could not read builder rewards</span>
           ) : (
             <>
-              lifetime <span className="font-bold text-fg">{formatCompactUsd(lifetime)}</span>
+              this app <span className="font-bold text-fg">{formatCompactUsd(appUsd)}</span>
               {' '}
               · claimable{' '}
               <span className="font-bold text-success">{formatUsdFine(unclaimed)}</span>
@@ -88,7 +80,7 @@ export function HlFeesCard({
               ) : null}
             </>
           )}
-        </div>
+        </p>
         {ok ? <div className="text-[11px] font-semibold text-brand">{ok}</div> : null}
         {error ? <div className="text-[11px] font-semibold text-error">{error}</div> : null}
       </div>

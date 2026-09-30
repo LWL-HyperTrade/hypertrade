@@ -21,6 +21,7 @@ import {
   placeSpotDeskOrder,
   type Hex,
 } from '../../lib/hlTrade';
+import type { Eip1193Provider } from '../../lib/hlTrade/wallet';
 import { useHlSetupStatus } from '../../lib/useHlAutoSetup';
 import {
   getConfirmOpenOrders,
@@ -63,6 +64,9 @@ type Props = {
   deployerFeeScale?: number | null;
   onOpenFees?: () => void;
   onNotify?: (toast: TradeToastPayload) => void;
+  /** When set, orders and the setup check use this wallet instead of the signed-in master. */
+  tradeAddress?: string | null;
+  getTradeProvider?: (() => Promise<Eip1193Provider | null>) | null;
 };
 
 const LEV_CHIPS = [2, 3, 5, 10, 20, 40];
@@ -218,10 +222,13 @@ export function OrderTicket({
   deployerFeeScale,
   onOpenFees,
   onNotify,
+  tradeAddress = null,
+  getTradeProvider = null,
 }: Props) {
   const { authenticated, address, builderAddress, getAccessToken, getEthereumProvider } = useWebAuth();
+  const activeAddress = ((tradeAddress || address) || null) as Hex | null;
   const qc = useQueryClient();
-  const setupQ = useHlSetupStatus(authenticated ? address : null);
+  const setupQ = useHlSetupStatus(authenticated ? activeAddress : null);
   const ownerKey = address ?? null;
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [kind, setKind] = useState<OrderKind>(() => getSavedOrderKind(ownerKey));
@@ -629,8 +636,8 @@ export function OrderTicket({
   const submit = async () => {
     setError(null);
     setOk(null);
-    if (!canSubmit || !address || mark == null) return;
-    if (builderAddress && address.toLowerCase() === builderAddress.toLowerCase()) {
+    if (!canSubmit || !activeAddress || mark == null) return;
+    if (builderAddress && activeAddress.toLowerCase() === builderAddress.toLowerCase()) {
       setError('Trade wallet required — builder wallet cannot place orders.');
       return;
     }
@@ -717,9 +724,9 @@ export function OrderTicket({
     setBusy(true);
     setStep('Preparing wallet');
     try {
-      const provider = await getEthereumProvider();
-      if (!provider) throw new Error('Wallet is not ready. Sign in again.');
-      const userAddress = address as Hex;
+      const provider = getTradeProvider ? await getTradeProvider() : await getEthereumProvider();
+      if (!provider || !activeAddress) throw new Error('Wallet is not ready. Sign in again.');
+      const userAddress = activeAddress;
       const ready = await ensureTradingReady({
         provider,
         userAddress,
@@ -798,18 +805,18 @@ export function OrderTicket({
         kind: 'ok',
         message: `${label} ${side === 'buy' ? 'buy' : 'sell'} submitted · ${symbol}`,
       });
-      void qc.invalidateQueries({ queryKey: ['hl', 'clearinghouse', address] });
-      void qc.invalidateQueries({ queryKey: ['hl', 'openOrders', address] });
-      void qc.invalidateQueries({ queryKey: ['hl', 'userFills', address] });
+      void qc.invalidateQueries({ queryKey: ['hl', 'clearinghouse', activeAddress] });
+      void qc.invalidateQueries({ queryKey: ['hl', 'openOrders', activeAddress] });
+      void qc.invalidateQueries({ queryKey: ['hl', 'userFills', activeAddress] });
       void qc.invalidateQueries({ queryKey: ['hl', 'setup', address] });
       void qc.invalidateQueries({ queryKey: ['hl', 'historicalOrders', address] });
-      void qc.refetchQueries({ queryKey: ['hl', 'openOrders', address] });
-      void qc.refetchQueries({ queryKey: ['hl', 'userFills', address] });
-      void qc.refetchQueries({ queryKey: ['hl', 'clearinghouse', address] });
+      void qc.refetchQueries({ queryKey: ['hl', 'openOrders', activeAddress] });
+      void qc.refetchQueries({ queryKey: ['hl', 'userFills', activeAddress] });
+      void qc.refetchQueries({ queryKey: ['hl', 'clearinghouse', activeAddress] });
     } catch (e) {
       // Re-verify agent / builder fee / unified on the next click; the
       // failure may be a revoked agent rather than a bad order.
-      invalidateTradingReady(address as Hex);
+      invalidateTradingReady(activeAddress);
       const msg = isWalletUserRejectedRequest(e)
         ? 'Wallet request was rejected.'
         : e instanceof Error
@@ -824,24 +831,24 @@ export function OrderTicket({
   };
 
   const enableUnified = async () => {
-    if (!address || unifyBusy) return;
-    if (builderAddress && address.toLowerCase() === builderAddress.toLowerCase()) {
+    if (!activeAddress || unifyBusy) return;
+    if (builderAddress && activeAddress.toLowerCase() === builderAddress.toLowerCase()) {
       setError('Trade wallet required — builder wallet stays on Standard.');
       return;
     }
     setUnifyBusy(true);
     setError(null);
     try {
-      const provider = await getEthereumProvider();
+      const provider = getTradeProvider ? await getTradeProvider() : await getEthereumProvider();
       if (!provider) throw new Error('Wallet is not ready.');
       await ensureTradingReady({
         provider,
-        userAddress: address as Hex,
+        userAddress: activeAddress,
         requiredFeeTenths: tenant.builder_fee_tenths,
         skipBuilderFee: true,
       });
       void qc.invalidateQueries({ queryKey: ['hl', 'setup', address] });
-      void qc.invalidateQueries({ queryKey: ['hl', 'clearinghouse', address] });
+      void qc.invalidateQueries({ queryKey: ['hl', 'clearinghouse', activeAddress] });
     } catch (e) {
       if (isWalletUserRejectedRequest(e)) setError('Wallet request was rejected.');
       else setError(e instanceof Error ? e.message : 'Could not enable unified account');

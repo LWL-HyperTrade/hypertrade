@@ -1,7 +1,7 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { useEffect } from 'react';
+import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useParams } from 'react-router-dom';
-import { WebAuthRoot } from './lib/auth';
+import { WebAuthRoot, useWebAuth } from './lib/auth';
 import { BrandedHostProvider, useBrandedHost } from './lib/brandedHost';
 import { tenantPublicUrl, usesPathTenants } from './lib/config';
 import { Shell } from './ui/Shell';
@@ -26,6 +26,7 @@ export function App() {
   return (
     <WebAuthRoot>
       <QueryClientProvider client={queryClient}>
+        <DropSessionOnUserChange />
         <HlAutoSetup />
         <BrowserRouter>
           <BrandedHostProvider>
@@ -35,6 +36,30 @@ export function App() {
       </QueryClientProvider>
     </WebAuthRoot>
   );
+}
+
+/** Launch wizard draft + `my-tenants` are not login-scoped. Drop both when the Privy user changes. */
+function DropSessionOnUserChange() {
+  const { ready, authenticated, userId } = useWebAuth();
+  const qc = useQueryClient();
+  const prev = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!ready) return;
+    const id = authenticated ? userId : null;
+    if (prev.current === undefined) {
+      prev.current = id;
+      return;
+    }
+    if (prev.current === id) return;
+    prev.current = id;
+    qc.removeQueries({ queryKey: ['my-tenants'] });
+    try {
+      sessionStorage.removeItem('bp-launch-draft');
+    } catch {
+      /* private mode */
+    }
+  }, [ready, authenticated, userId, qc]);
+  return null;
 }
 
 function AppRoutes() {

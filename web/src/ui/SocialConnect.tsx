@@ -25,10 +25,10 @@ type SocialRow = {
 
 const ROWS: SocialRow[] = [
   { id: 'twitter', label: 'X', Icon: IconX, prefix: '@', hint: 'Sign in with X to prove it’s yours' },
-  { id: 'youtube', label: 'YouTube', Icon: IconYouTube, prefix: '', hint: 'Same as Google login — connect Google to verify' },
+  { id: 'youtube', label: 'YouTube', Icon: IconYouTube, prefix: '', hint: 'A YouTube channel is separate from Google login', soon: true },
   { id: 'twitch', label: 'Twitch', Icon: IconTwitch, prefix: '', hint: 'Sign in with Twitch to prove it’s yours' },
   { id: 'discord', label: 'Discord', Icon: IconDiscord, prefix: '', hint: 'Sign in with Discord to prove it’s yours' },
-  { id: 'tiktok', label: 'TikTok', Icon: IconTikTok, prefix: '@', hint: 'Coming soon', soon: true },
+  { id: 'tiktok', label: 'TikTok', Icon: IconTikTok, prefix: '@', hint: 'Sign in with TikTok to prove it’s yours' },
   { id: 'instagram', label: 'Instagram', Icon: IconInstagram, prefix: '@', hint: 'Coming soon', soon: true },
   // linkTelegram / unlink still wired in auth.tsx — re-enable Connect when ready.
   { id: 'telegram', label: 'Telegram', Icon: IconTelegram, prefix: '@', hint: 'Coming soon', soon: true },

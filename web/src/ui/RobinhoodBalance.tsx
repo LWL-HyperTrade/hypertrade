@@ -28,7 +28,7 @@ type Props = {
 };
 
 export function RobinhoodBalance({ compact }: Props) {
-  const { email, address, logout, getEthereumProvider, switchTradeChain } = useWebAuth();
+  const { email, address, logout, getEthereumProvider, switchTradeChain, isEmbedded } = useWebAuth();
   const { sendTransaction } = useSendTransaction();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -437,7 +437,7 @@ export function RobinhoodBalance({ compact }: Props) {
                         onClick={() => void moveToExternal()}
                         className="btn-primary btn-sm mt-2 w-full py-2.5 text-[13px]"
                       >
-                        {busy ? 'Confirm in wallet…' : 'Withdraw to External Wallet'}
+                        {busy ? (isEmbedded ? 'Confirming' : 'Confirm in wallet…') : 'Withdraw to External Wallet'}
                       </button>
                       <p className="mt-1.5 text-[11px] leading-4 text-fg-subtle">
                         You pay Robinhood ETH gas from this balance. No minimum.

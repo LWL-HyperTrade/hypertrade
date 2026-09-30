@@ -351,6 +351,16 @@ export function IconTwitch(p: P) {
   );
 }
 
+/** Picture-in-picture overlay — resident chip next to the Twitch dock. */
+export function IconOverlay(p: P) {
+  return (
+    <svg {...base(p)}>
+      <rect x="3" y="5" width="18" height="14" rx="2.2" />
+      <rect x="12.5" y="12" width="6.5" height="5" rx="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 export function IconChevron(p: P) {
   return (
     <svg {...base(p)}>
@@ -484,6 +494,35 @@ export function IconEyeOff(p: P) {
       <path d="M10.6 10.6a2 2 0 0 0 2.8 2.8" />
       <path d="M9.9 5.1A10.6 10.6 0 0 1 12 5c6.5 0 10 7 10 7a17.4 17.4 0 0 1-3.2 3.6" />
       <path d="M6.1 6.1C3.7 7.8 2 12 2 12s3.5 7 10 7a10.3 10.3 0 0 0 4.4-1" />
+    </svg>
+  );
+}
+
+export function IconPlay(p: P) {
+  return (
+    <svg {...base(p)} fill="currentColor" stroke="none">
+      <path d="M8 5.5v13l11-6.5-11-6.5z" />
+    </svg>
+  );
+}
+
+export function IconPause(p: P) {
+  return (
+    <svg {...base(p)} fill="currentColor" stroke="none">
+      <rect x="6" y="5" width="4" height="14" rx="1" />
+      <rect x="14" y="5" width="4" height="14" rx="1" />
+    </svg>
+  );
+}
+
+export function IconBot(p: P) {
+  return (
+    <svg {...base(p)}>
+      <rect x="5" y="8" width="14" height="11" rx="3" />
+      <path d="M12 8V4" />
+      <circle cx="12" cy="3.2" r="1" fill="currentColor" stroke="none" />
+      <path d="M9 13h.01M15 13h.01" strokeWidth="3" />
+      <path d="M9 16h6" />
     </svg>
   );
 }

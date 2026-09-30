@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { fetchCatalogAssets } from '../lib/api';
+import { fetchCatalogAssets, fetchTenant } from '../lib/api';
 import { loginHref, useWebAuth } from '../lib/auth';
 import { useTenantPaths } from '../lib/brandedHost';
+import { consoleHref } from '../lib/config';
 import { filterAssetsForTenant, pickDefaultMarket, type TenantPublic } from '../lib/tenants';
 import { useCreatorDocumentBrand, useCreatorSlug, useTenantBrand } from '../lib/useTenantBrand';
 import { WalletSheet } from './WalletSheet';
 import { BrandStatus } from './BrandMark';
-import { IconClose, IconExternal, IconMenu } from './icons';
+import { IconClose, IconExternal, IconLayers, IconMenu } from './icons';
 
 const YEAR = new Date().getFullYear();
 
@@ -57,13 +58,25 @@ function useAnchors(): Anchor[] {
 function CreatorHeader({ tenant }: { tenant: TenantPublic | undefined }) {
   const { pathname, hash } = useLocation();
   const navigate = useNavigate();
-  const { authenticated, hydrating, logout } = useWebAuth();
+  const { authenticated, hydrating, logout, getAccessToken } = useWebAuth();
   const [open, setOpen] = useState(false);
   const [mobile, setMobile] = useState(false);
   const anchors = useAnchors();
   const launchTo = useLaunchAppHref(tenant);
-  const { home } = useCreatorSlug();
+  const { slug, home } = useCreatorSlug();
   const onHome = pathname === home || pathname === `${home}/`;
+  const projectsHref = consoleHref('/apps');
+
+  const ownerQ = useQuery({
+    queryKey: ['tenant', slug, authenticated],
+    enabled: authenticated && !!slug,
+    queryFn: async () => {
+      const token = await getAccessToken();
+      return fetchTenant(slug, token);
+    },
+    staleTime: 60_000,
+  });
+  const isOwner = authenticated && !!ownerQ.data?.privy_user_id;
 
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 767px)');
@@ -141,6 +154,12 @@ function CreatorHeader({ tenant }: { tenant: TenantPublic | undefined }) {
               {a.label}
             </button>
           ))}
+          {isOwner ? (
+            <a href={projectsHref} className="creator-nav-link inline-flex items-center gap-1">
+              My Projects
+              <IconExternal size={11} className="opacity-70" />
+            </a>
+          ) : null}
         </nav>
 
         <div className="ml-auto flex min-w-0 items-center gap-1.5 sm:gap-2">
@@ -209,6 +228,16 @@ function CreatorHeader({ tenant }: { tenant: TenantPublic | undefined }) {
                   {a.label}
                 </button>
               ))}
+              {isOwner ? (
+                <a
+                  href={projectsHref}
+                  className="inline-flex items-center gap-2 rounded-xl px-3 py-2.5 text-[14px] font-bold text-fg-muted hover:bg-fill-weaker hover:text-fg"
+                >
+                  <IconLayers size={15} />
+                  <span className="flex-1">My Projects</span>
+                  <IconExternal size={12} className="opacity-70" />
+                </a>
+              ) : null}
             </nav>
             <div className="mt-2 flex flex-col gap-2 border-t border-stroke-weak pt-3">
               {launchTo ? (

@@ -484,6 +484,7 @@ export function StreamDock({
     <div
       role="button"
       tabIndex={0}
+      data-overlay-chip=""
       className={`relative inline-flex touch-none items-center justify-center overflow-hidden text-white shadow-lg ${
         fab
           ? 'size-11 cursor-grab rounded-full active:cursor-grabbing'

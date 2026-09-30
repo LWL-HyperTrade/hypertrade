@@ -241,6 +241,14 @@ a { color: inherit; text-decoration: none; }
 }
 .btn-sm { --stamp-offset: 3px; border-radius: 10px; }
 
+@keyframes resident-agent-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.resident-agent-in {
+  animation: resident-agent-in 220ms ease;
+}
+
 /* Activate chapter: Skip-to-Token stamp + hover tip (leave = gone). */
 .skip-preview-mark {
   display: inline-flex;
@@ -402,6 +410,22 @@ a { color: inherit; text-decoration: none; }
   border-color: var(--text-error);
   box-shadow: 3px 3px 0 0 var(--text-error);
 }
+/* Native <select> uses the OS arrow, which ignores padding and sits in a
+   separate hit-region. Draw a chevron inside the same padded bar as inputs. */
+select.field {
+  display: block;
+  width: 100%;
+  -webkit-appearance: none;
+  appearance: none;
+  padding-right: 2.25rem;
+  background-color: var(--bg-base);
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M4 6l4 4 4-4' stroke='%238a918c' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  background-size: 12px;
+  cursor: pointer;
+}
+select.field::-ms-expand { display: none; }
 .field-split {
   display: flex;
   align-items: stretch;

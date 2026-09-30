@@ -88,6 +88,10 @@ function upsertCandle(list: Candle[], next: Candle): Candle[] {
   return copy;
 }
 
+function candleFeedOf(iv: CandleInterval) {
+  return isCalendarBarInterval(iv) ? '1d' : iv;
+}
+
 export function useHlMarket(
   coin: string,
   interval: CandleInterval,
@@ -100,6 +104,9 @@ export function useHlMarket(
   const [state, setState] = useState<HlMarketState>(empty);
   const coinRef = useRef(coin);
   coinRef.current = coin;
+  const intervalRef = useRef(interval);
+  intervalRef.current = interval;
+  const candleFeedRef = useRef(candleFeedOf(interval));
   const bookSigFigs = opts?.bookSigFigs ?? null;
   const sigFigsRef = useRef<number | null>(bookSigFigs);
   const wsRef = useRef<WebSocket | null>(null);
@@ -173,13 +180,12 @@ export function useHlMarket(
         });
       });
     }, 4_000);
-    const candleFeed = isCalendarBarInterval(interval) ? '1d' : interval;
     const subscribe = (socket: WebSocket) => {
       const subs = [
         l2BookRequest(coin, sigFigsRef.current),
         { type: 'trades', coin },
         { type: isSpot ? 'activeSpotAssetCtx' : 'activeAssetCtx', coin },
-        { type: 'candle', coin, interval: candleFeed },
+        { type: 'candle', coin, interval: candleFeedRef.current },
       ];
       for (const subscription of subs) {
         socket.send(JSON.stringify({ method: 'subscribe', subscription }));
@@ -238,8 +244,9 @@ export function useHlMarket(
             v: num(c.v) ?? 0,
           };
           setState((s) => {
-            const next = isCalendarBarInterval(interval)
-              ? isCalendarMonthInterval(interval)
+            const iv = intervalRef.current;
+            const next = isCalendarBarInterval(iv)
+              ? isCalendarMonthInterval(iv)
                 ? foldDailyLiveIntoMonthBar(candle, s.candles[s.candles.length - 1] ?? null)
                 : foldDailyLiveIntoWeekBar(candle, s.candles[s.candles.length - 1] ?? null)
               : candle;
@@ -274,7 +281,27 @@ export function useHlMarket(
         }
       }
     };
-  }, [coin, interval, isSpot]);
+  }, [coin, isSpot]);
+
+  // Timeframe change: swap only the candle subscription. Do not tear down
+  // activeAssetCtx — that wiped live Mark and the header rolled back to the
+  // catalog snapshot from first load.
+  useEffect(() => {
+    const next = candleFeedOf(interval);
+    const prev = candleFeedRef.current;
+    if (prev === next) return;
+    candleFeedRef.current = next;
+    if (!coin) return;
+    const socket = wsRef.current;
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(
+        JSON.stringify({ method: 'unsubscribe', subscription: { type: 'candle', coin, interval: prev } }),
+      );
+      socket.send(
+        JSON.stringify({ method: 'subscribe', subscription: { type: 'candle', coin, interval: next } }),
+      );
+    }
+  }, [coin, interval]);
 
   // Grouping change: swap only the l2Book subscription on the live socket
   // (trades / ctx / candles keep streaming) and refresh the REST snapshot at

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { loginHref, useWebAuth } from '../../lib/auth';
-import { fetchCatalogAssets, fetchTenant, patchTenant, recordTenantOrder } from '../../lib/api';
+import { fetchBuilderWallets, fetchCatalogAssets, fetchTenant, fetchTenantResident, patchTenant, recordTenantOrder } from '../../lib/api';
 import {
   cancelDeskOrder,
   cancelDeskOrders,
@@ -74,6 +74,7 @@ import { quoteLogoSrc } from '../../lib/quoteLogos';
 import { ScrollFadeX } from '../ScrollFadeX';
 import { TradeToast, type TradeToastPayload } from './TradeToast';
 import { StreamDock, StreamDockRestoreButton } from './StreamDock';
+import { ResidentDock, ResidentDockRestoreButton } from '../resident/ResidentDock';
 import { TradeSettingsSheet } from './TradeSettingsSheet';
 import { PositionTpslSheet, type PositionTpslTarget } from './PositionTpslSheet';
 import { EditOrderSheet, type EditOrderTarget } from './EditOrderSheet';
@@ -85,18 +86,23 @@ type Props = {
 };
 
 export function TenantApp({ slug, coin }: Props) {
-  const { authenticated, getAccessToken, getEthereumProvider, address, builderAddress, hydrating } = useWebAuth();
+  const { authenticated, getAccessToken, getEthereumProvider, getResidentEthereumProvider, address, builderAddress, hydrating } = useWebAuth();
   const paths = useTenantPaths();
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const accountRef = useRef<HTMLDivElement>(null);
   const streamSlotRef = useRef<HTMLSpanElement>(null);
+  const residentSlotRef = useRef<HTMLSpanElement>(null);
   const [interval, setInterval] = useState<CandleInterval>(() => getSavedChartInterval());
   const [busy, setBusy] = useState(false);
   const [closingCoin, setClosingCoin] = useState<string | null>(null);
+  const [closingAll, setClosingAll] = useState(false);
+  const closingAllCoinsRef = useRef<string[]>([]);
   const [closeError, setCloseError] = useState<string | null>(null);
   const [cancellingOid, setCancellingOid] = useState<number | null>(null);
+  const [cancellingAll, setCancellingAll] = useState(false);
+  const cancellingAllOidsRef = useRef<number[]>([]);
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerTab, setPickerTab] = useState<SymbolPickerTab>('all');
@@ -182,7 +188,41 @@ export function TenantApp({ slug, coin }: Props) {
   // Order-book grouping chosen in the book panel → HL `nSigFigs` on the l2Book feed.
   const [bookSigFigs, setBookSigFigs] = useState<number | null>(null);
   const market = useHlMarket(bookCoin, interval, { spot: isSpotMode, bookSigFigs });
-  const account = useHlAccount(address);
+
+  const builderWalletsQ = useQuery({
+    queryKey: ['builder-wallets', address],
+    enabled: authenticated && !!address,
+    queryFn: async () => {
+      const token = await getAccessToken();
+      if (!token) return null;
+      return fetchBuilderWallets(token);
+    },
+    staleTime: 15_000,
+  });
+  const residentWallet = (builderWalletsQ.data?.resident_wallet || '').trim();
+  const canUseResidentBook =
+    authenticated &&
+    !!tenant?.privy_user_id &&
+    !!tenant?.resident &&
+    !!residentWallet &&
+    residentWallet.toLowerCase() !== (address || '').toLowerCase();
+  const [book, setBook] = useState<'master' | 'resident'>('master');
+  useEffect(() => {
+    if (!canUseResidentBook) setBook('master');
+  }, [canUseResidentBook]);
+  const residentNameQ = useQuery({
+    queryKey: ['tenant-resident', tenant?.slug ?? null],
+    enabled: !!tenant?.slug && !!tenant?.resident,
+    queryFn: () => fetchTenantResident(tenant!.slug),
+    staleTime: 10_000,
+  });
+  const residentBookLabel =
+    residentNameQ.data?.agents?.find((a) => a.status === 'active')?.name?.trim() ||
+    residentNameQ.data?.agents?.[0]?.name?.trim() ||
+    (residentNameQ.data?.persona?.display_name || '').trim() ||
+    'Resident';
+  const tradeAddress = book === 'resident' && canUseResidentBook ? residentWallet : address;
+  const account = useHlAccount(tradeAddress);
 
   // Keep close/cancel rows dimmed until HL account data drops them — clearing
   // busy in `finally` flashed the row back to full opacity before refetch.
@@ -195,10 +235,34 @@ export function TenantApp({ slug, coin }: Props) {
   }, [account.clearing?.positions, closingCoin]);
 
   useEffect(() => {
+    if (!closingAll) return;
+    const wanted = closingAllCoinsRef.current;
+    if (!wanted.length) {
+      setClosingAll(false);
+      return;
+    }
+    const stillOpen = account.clearing?.positions.some((p) =>
+      wanted.some((c) => c.toUpperCase() === p.coin.toUpperCase()),
+    );
+    if (!stillOpen) setClosingAll(false);
+  }, [account.clearing?.positions, closingAll]);
+
+  useEffect(() => {
     if (cancellingOid == null) return;
     const stillOpen = account.orders.some((o) => o.oid === cancellingOid);
     if (!stillOpen) setCancellingOid(null);
   }, [account.orders, cancellingOid]);
+
+  useEffect(() => {
+    if (!cancellingAll) return;
+    const wanted = cancellingAllOidsRef.current;
+    if (!wanted.length) {
+      setCancellingAll(false);
+      return;
+    }
+    const stillOpen = account.orders.some((o) => wanted.includes(o.oid));
+    if (!stillOpen) setCancellingAll(false);
+  }, [account.orders, cancellingAll]);
 
   useEffect(() => {
     if (!closingCoin) return;
@@ -209,6 +273,12 @@ export function TenantApp({ slug, coin }: Props) {
   }, [closingCoin]);
 
   useEffect(() => {
+    if (!closingAll) return;
+    const id = window.setTimeout(() => setClosingAll(false), 60_000);
+    return () => window.clearTimeout(id);
+  }, [closingAll]);
+
+  useEffect(() => {
     if (cancellingOid == null) return;
     const id = window.setTimeout(() => {
       setCancellingOid((cur) => (cur === cancellingOid ? null : cur));
@@ -216,9 +286,20 @@ export function TenantApp({ slug, coin }: Props) {
     return () => window.clearTimeout(id);
   }, [cancellingOid]);
 
+  useEffect(() => {
+    if (!cancellingAll) return;
+    const id = window.setTimeout(() => setCancellingAll(false), 30_000);
+    return () => window.clearTimeout(id);
+  }, [cancellingAll]);
+
+  const walletRow = builderWalletsQ.data;
+  const activeBuilder =
+    walletRow?.live === 'own' && walletRow.hl?.ready && walletRow.builder_wallet
+      ? walletRow.builder_wallet
+      : null;
   const distinctBuilder =
-    builderAddress && (!address || builderAddress.toLowerCase() !== address.toLowerCase())
-      ? builderAddress
+    activeBuilder && (!address || activeBuilder.toLowerCase() !== address.toLowerCase())
+      ? activeBuilder
       : null;
   const builderAccount = useHlAccount(
     authenticated && tenantQ.data?.privy_user_id ? distinctBuilder : null,
@@ -363,26 +444,35 @@ export function TenantApp({ slug, coin }: Props) {
   }
 
   const isOwner = authenticated && !!tenant.privy_user_id;
+  const signingAddress = (tradeAddress || address || '') as Hex;
+
+  const prepareTrade = async () => {
+    if (!signingAddress || !tenant || tenant.status !== 'live') {
+      throw new Error('Wallet is not ready. Sign in again.');
+    }
+    if (builderAddress && signingAddress.toLowerCase() === builderAddress.toLowerCase()) {
+      throw new Error('Trade wallet required — builder wallet cannot place orders.');
+    }
+    const provider =
+      book === 'resident' && canUseResidentBook
+        ? await getResidentEthereumProvider(residentWallet)
+        : await getEthereumProvider();
+    if (!provider) throw new Error('Wallet is not ready. Sign in again.');
+    const ready = await ensureTradingReady({
+      provider,
+      userAddress: signingAddress,
+      requiredFeeTenths: tenant.builder_fee_tenths,
+      builderAddress: tenant.builder_address,
+    });
+    return { ready, userAddress: signingAddress };
+  };
 
   const closePosition = async (position: Clearinghouse['positions'][number]) => {
-    if (!address || !tenant || tenant.status !== 'live') return;
-    if (builderAddress && address.toLowerCase() === builderAddress.toLowerCase()) {
-      setCloseError('Trade wallet required — builder wallet cannot close positions.');
-      notify({ kind: 'err', message: 'Trade wallet required — builder wallet cannot close positions.' });
-      return;
-    }
+    if (!signingAddress || !tenant || tenant.status !== 'live') return;
     setCloseError(null);
     setClosingCoin(position.coin);
     try {
-      const provider = await getEthereumProvider();
-      if (!provider) throw new Error('Wallet is not ready. Sign in again.');
-      const userAddress = address as Hex;
-      const ready = await ensureTradingReady({
-        provider,
-        userAddress,
-        requiredFeeTenths: tenant.builder_fee_tenths,
-        builderAddress: tenant.builder_address,
-      });
+      const { ready, userAddress } = await prepareTrade();
       const result = await marketCloseDeskPosition({
         agentPrivateKey: ready.agentPrivateKey,
         symbol: position.coin,
@@ -417,13 +507,13 @@ export function TenantApp({ slug, coin }: Props) {
         }
       })();
       notify({ kind: 'ok', message: `Closed ${displaySymbol(position.coin)} position` });
-      void qc.invalidateQueries({ queryKey: ['hl', 'clearinghouse', address] });
-      void qc.invalidateQueries({ queryKey: ['hl', 'openOrders', address] });
-      void qc.invalidateQueries({ queryKey: ['hl', 'userFills', address] });
-      void qc.refetchQueries({ queryKey: ['hl', 'userFills', address] });
-      void qc.refetchQueries({ queryKey: ['hl', 'clearinghouse', address] });
+      void qc.invalidateQueries({ queryKey: ['hl', 'clearinghouse', signingAddress] });
+      void qc.invalidateQueries({ queryKey: ['hl', 'openOrders', signingAddress] });
+      void qc.invalidateQueries({ queryKey: ['hl', 'userFills', signingAddress] });
+      void qc.refetchQueries({ queryKey: ['hl', 'userFills', signingAddress] });
+      void qc.refetchQueries({ queryKey: ['hl', 'clearinghouse', signingAddress] });
     } catch (e) {
-      invalidateTradingReady(address as Hex);
+      invalidateTradingReady(signingAddress);
       const msg = isWalletUserRejectedRequest(e)
         ? 'Wallet request was rejected.'
         : e instanceof Error
@@ -435,9 +525,106 @@ export function TenantApp({ slug, coin }: Props) {
     }
   };
 
+  const closeAllPositions = async (rows: Clearinghouse['positions']) => {
+    if (!signingAddress || !tenant || tenant.status !== 'live') return;
+    if (builderAddress && signingAddress.toLowerCase() === builderAddress.toLowerCase()) {
+      setCloseError('Trade wallet required — builder wallet cannot close positions.');
+      notify({ kind: 'err', message: 'Trade wallet required — builder wallet cannot close positions.' });
+      return;
+    }
+    if (rows.length < 2) return;
+    setCloseError(null);
+    setClosingCoin(null);
+    closingAllCoinsRef.current = rows.map((p) => p.coin);
+    setClosingAll(true);
+    let closed = 0;
+    let lastErr: string | null = null;
+    try {
+      const { ready, userAddress } = await prepareTrade();
+      for (let i = 0; i < rows.length; i++) {
+        const position = rows[i];
+        if (i > 0) await new Promise((r) => setTimeout(r, 200));
+        const liveMark =
+          selected?.coin === position.coin && mark != null && mark > 0
+            ? mark
+            : num(markets.find((m) => m.coin === position.coin)?.markPx);
+        const oraclePx = liveMark ?? undefined;
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            const result = await marketCloseDeskPosition({
+              agentPrivateKey: ready.agentPrivateKey,
+              symbol: position.coin,
+              szi: position.szi,
+              oraclePx,
+              feeTenths: tenant.builder_fee_tenths,
+              cloidPrefix: tenant.cloid_prefix,
+              builderAddress: tenant.builder_address,
+            });
+            void (async () => {
+              try {
+                const token = await getAccessToken();
+                if (!token) return;
+                await recordTenantOrder(
+                  tenant.slug,
+                  {
+                    cloid: result.cloid,
+                    oid: result.oid,
+                    symbol: position.coin,
+                    wallet_address: userAddress,
+                    notional_usd: result.notionalUsd,
+                    side: result.side,
+                    reduce_only: true,
+                  },
+                  token,
+                );
+              } catch {
+                /* best-effort */
+              }
+            })();
+            closed += 1;
+            break;
+          } catch (e) {
+            if (isWalletUserRejectedRequest(e)) throw e;
+            lastErr = e instanceof Error ? e.message : 'Close failed';
+            if (attempt === 2) break;
+            await new Promise((r) => setTimeout(r, looksRateLimited(e) ? 6_000 : 350));
+          }
+        }
+      }
+      if (closed === rows.length) {
+        notify({ kind: 'ok', message: 'Closed all positions' });
+      } else if (closed > 0) {
+        const msg = `Closed ${closed} of ${rows.length} positions${lastErr ? ` — ${lastErr}` : ''}`;
+        setCloseError(msg);
+        notify({ kind: 'err', message: msg });
+        setClosingAll(false);
+      } else {
+        const msg = lastErr ?? 'Close all failed';
+        setCloseError(msg);
+        notify({ kind: 'err', message: msg });
+        setClosingAll(false);
+      }
+      void qc.invalidateQueries({ queryKey: ['hl', 'clearinghouse', signingAddress] });
+      void qc.invalidateQueries({ queryKey: ['hl', 'openOrders', signingAddress] });
+      void qc.invalidateQueries({ queryKey: ['hl', 'userFills', signingAddress] });
+      void qc.refetchQueries({ queryKey: ['hl', 'userFills', signingAddress] });
+      void qc.refetchQueries({ queryKey: ['hl', 'clearinghouse', signingAddress] });
+    } catch (e) {
+      invalidateTradingReady(signingAddress);
+      const msg = isWalletUserRejectedRequest(e)
+        ? 'Wallet request was rejected.'
+        : e instanceof Error
+          ? e.message
+          : 'Close all failed';
+      setCloseError(msg);
+      notify({ kind: 'err', message: msg });
+      setClosingAll(false);
+    }
+  };
+
   const submitPositionTpsl = async (tp: number | null, sl: number | null) => {
-    if (!tpslTarget || !address || !tenant || tenant.status !== 'live') return;
-    if (builderAddress && address.toLowerCase() === builderAddress.toLowerCase()) {
+    if (!tpslTarget || !signingAddress || !tenant || tenant.status !== 'live') return;
+    if (builderAddress && signingAddress.toLowerCase() === builderAddress.toLowerCase()) {
       setTpslError('Trade wallet required — builder wallet cannot set TP/SL.');
       return;
     }
@@ -467,14 +654,7 @@ export function TenantApp({ slug, coin }: Props) {
     setTpslBusy(true);
     setTpslError(null);
     try {
-      const provider = await getEthereumProvider();
-      if (!provider) throw new Error('Wallet is not ready. Sign in again.');
-      const ready = await ensureTradingReady({
-        provider,
-        userAddress: address as Hex,
-        requiredFeeTenths: tenant.builder_fee_tenths,
-        builderAddress: tenant.builder_address,
-      });
+      const { ready } = await prepareTrade();
 
       // Two exchange actions total, whatever the count: one batched cancel of
       // the existing TP/SL triggers, then one `positionTpsl` order carrying
@@ -508,10 +688,10 @@ export function TenantApp({ slug, coin }: Props) {
 
       setTpslTarget(null);
       notify({ kind: 'ok', message: `TP/SL set on ${displaySymbol(tpslTarget.coin)}` });
-      void qc.invalidateQueries({ queryKey: ['hl', 'openOrders', address] });
-      void qc.refetchQueries({ queryKey: ['hl', 'openOrders', address] });
+      void qc.invalidateQueries({ queryKey: ['hl', 'openOrders', signingAddress] });
+      void qc.refetchQueries({ queryKey: ['hl', 'openOrders', signingAddress] });
     } catch (e) {
-      invalidateTradingReady(address as Hex);
+      invalidateTradingReady(signingAddress);
       const msg = isWalletUserRejectedRequest(e)
         ? 'Wallet request was rejected.'
         : e instanceof Error
@@ -525,39 +705,65 @@ export function TenantApp({ slug, coin }: Props) {
   };
 
   const cancelOrder = async (order: OpenOrder) => {
-    if (!address || !tenant || tenant.status !== 'live') return;
-    if (builderAddress && address.toLowerCase() === builderAddress.toLowerCase()) {
+    if (!signingAddress || !tenant || tenant.status !== 'live') return;
+    if (builderAddress && signingAddress.toLowerCase() === builderAddress.toLowerCase()) {
       setCancelError('Trade wallet required — builder wallet cannot cancel orders.');
       return;
     }
     setCancelError(null);
     setCancellingOid(order.oid);
     try {
-      const provider = await getEthereumProvider();
-      if (!provider) throw new Error('Wallet is not ready. Sign in again.');
-      const userAddress = address as Hex;
-      const ready = await ensureTradingReady({
-        provider,
-        userAddress,
-        requiredFeeTenths: tenant.builder_fee_tenths,
-        builderAddress: tenant.builder_address,
-      });
+      const { ready } = await prepareTrade();
       await cancelDeskOrder({
         agentPrivateKey: ready.agentPrivateKey,
         symbol: order.coin,
         oid: order.oid,
       });
-      void qc.invalidateQueries({ queryKey: ['hl', 'openOrders', address] });
-      void qc.invalidateQueries({ queryKey: ['hl', 'clearinghouse', address] });
-      void qc.refetchQueries({ queryKey: ['hl', 'openOrders', address] });
+      void qc.invalidateQueries({ queryKey: ['hl', 'openOrders', signingAddress] });
+      void qc.invalidateQueries({ queryKey: ['hl', 'clearinghouse', signingAddress] });
+      void qc.refetchQueries({ queryKey: ['hl', 'openOrders', signingAddress] });
     } catch (e) {
-      invalidateTradingReady(address as Hex);
+      invalidateTradingReady(signingAddress);
       if (isWalletUserRejectedRequest(e)) {
         setCancelError('Wallet request was rejected.');
       } else {
         setCancelError(e instanceof Error ? e.message : 'Cancel failed');
       }
       setCancellingOid(null);
+    }
+  };
+
+  const cancelAllOrders = async (rows: OpenOrder[]) => {
+    if (!signingAddress || !tenant || tenant.status !== 'live') return;
+    if (builderAddress && signingAddress.toLowerCase() === builderAddress.toLowerCase()) {
+      setCancelError('Trade wallet required — builder wallet cannot cancel orders.');
+      return;
+    }
+    if (rows.length < 2) return;
+    setCancelError(null);
+    setCancellingOid(null);
+    cancellingAllOidsRef.current = rows.map((o) => o.oid);
+    setCancellingAll(true);
+    try {
+      const { ready } = await prepareTrade();
+      await cancelDeskOrders({
+        agentPrivateKey: ready.agentPrivateKey,
+        orders: rows.map((o) => ({ symbol: o.coin, oid: o.oid })),
+      });
+      notify({ kind: 'ok', message: 'Cancelled all orders' });
+      void qc.invalidateQueries({ queryKey: ['hl', 'openOrders', signingAddress] });
+      void qc.invalidateQueries({ queryKey: ['hl', 'clearinghouse', signingAddress] });
+      void qc.refetchQueries({ queryKey: ['hl', 'openOrders', signingAddress] });
+    } catch (e) {
+      invalidateTradingReady(signingAddress);
+      const msg = isWalletUserRejectedRequest(e)
+        ? 'Wallet request was rejected.'
+        : e instanceof Error
+          ? e.message
+          : 'Cancel all failed';
+      setCancelError(msg);
+      notify({ kind: 'err', message: msg });
+      setCancellingAll(false);
     }
   };
 
@@ -583,8 +789,8 @@ export function TenantApp({ slug, coin }: Props) {
   };
 
   const submitEditOrder = async (px: number, size: number) => {
-    if (!editTarget || !address || !tenant || tenant.status !== 'live') return;
-    if (builderAddress && address.toLowerCase() === builderAddress.toLowerCase()) {
+    if (!editTarget || !signingAddress || !tenant || tenant.status !== 'live') return;
+    if (builderAddress && signingAddress.toLowerCase() === builderAddress.toLowerCase()) {
       setEditError('Trade wallet required — builder wallet cannot edit orders.');
       return;
     }
@@ -600,14 +806,7 @@ export function TenantApp({ slug, coin }: Props) {
     setEditBusy(true);
     setEditError(null);
     try {
-      const provider = await getEthereumProvider();
-      if (!provider) throw new Error('Wallet is not ready. Sign in again.');
-      const ready = await ensureTradingReady({
-        provider,
-        userAddress: address as Hex,
-        requiredFeeTenths: tenant.builder_fee_tenths,
-        builderAddress: tenant.builder_address,
-      });
+      const { ready } = await prepareTrade();
       await modifyDeskOrder({
         agentPrivateKey: ready.agentPrivateKey,
         symbol: o.coin,
@@ -624,11 +823,11 @@ export function TenantApp({ slug, coin }: Props) {
       });
       setEditTarget(null);
       notify({ kind: 'ok', message: `Order updated on ${displaySymbol(o.coin)}` });
-      void qc.invalidateQueries({ queryKey: ['hl', 'openOrders', address] });
-      void qc.invalidateQueries({ queryKey: ['hl', 'clearinghouse', address] });
-      void qc.refetchQueries({ queryKey: ['hl', 'openOrders', address] });
+      void qc.invalidateQueries({ queryKey: ['hl', 'openOrders', signingAddress] });
+      void qc.invalidateQueries({ queryKey: ['hl', 'clearinghouse', signingAddress] });
+      void qc.refetchQueries({ queryKey: ['hl', 'openOrders', signingAddress] });
     } catch (e) {
-      invalidateTradingReady(address as Hex);
+      invalidateTradingReady(signingAddress);
       const msg = isWalletUserRejectedRequest(e)
         ? 'Wallet request was rejected.'
         : e instanceof Error
@@ -710,10 +909,43 @@ export function TenantApp({ slug, coin }: Props) {
               </Link>
             </>
           ) : null}
+          {tenant.resident || (tenant.status === 'live' && tenant.stream?.twitch && tenant.socials.twitch) ? (
+            <span className="hidden shrink-0 items-center self-center sm:has-[[data-overlay-chip]]:contents">
+              <span className="h-5 w-px shrink-0 bg-stroke-strong" aria-hidden />
+              <span className="inline-flex shrink-0 items-center gap-1.5">
+                {tenant.resident ? <span ref={residentSlotRef} className="inline-flex empty:hidden" /> : null}
+                {tenant.status === 'live' && tenant.stream?.twitch && tenant.socials.twitch ? (
+                  <span ref={streamSlotRef} className="inline-flex empty:hidden" />
+                ) : null}
+              </span>
+            </span>
+          ) : null}
         </div>
-        <span ref={streamSlotRef} className="ml-2 hidden shrink-0 items-center self-center sm:inline-flex" />
 
         <div className="ml-auto flex items-center gap-1.5 text-[11px] leading-none text-fg-muted sm:gap-2">
+          {canUseResidentBook ? (
+            <div className="flex shrink-0 rounded-md border border-stroke-weak p-0.5">
+              <button
+                type="button"
+                onClick={() => setBook('master')}
+                className={`rounded px-2 py-1 text-[10px] font-extrabold ${
+                  book === 'master' ? 'bg-fill-strong text-fg' : 'text-fg-subtle hover:text-fg'
+                }`}
+              >
+                Main
+              </button>
+              <button
+                type="button"
+                onClick={() => setBook('resident')}
+                title={residentBookLabel}
+                className={`max-w-[9rem] truncate rounded px-2 py-1 text-[10px] font-extrabold ${
+                  book === 'resident' ? 'bg-[#5b9cff] text-[#06140c]' : 'text-fg-subtle hover:text-fg'
+                }`}
+              >
+                {residentBookLabel}
+              </button>
+            </div>
+          ) : null}
           <button
             type="button"
             onClick={() => setFeesOpen(true)}
@@ -732,7 +964,11 @@ export function TenantApp({ slug, coin }: Props) {
               >
                 <IconGear size={16} />
               </button>
-              <WalletSheet compact hideRobinhood />
+              <WalletSheet
+                compact
+                hideRobinhood
+                hlAddress={book === 'resident' ? tradeAddress : null}
+              />
             </>
           ) : hydrating ? (
             <span>…</span>
@@ -835,11 +1071,21 @@ export function TenantApp({ slug, coin }: Props) {
               </div>
               <div className="mt-4 border-t border-stroke-weak pt-3">
                 <SocialLinks socials={tenant.socials} className="flex items-center gap-3 text-fg-subtle" />
-                {tenant.status === 'live' && tenant.stream?.twitch && tenant.socials.twitch ? (
-                  <StreamDockRestoreButton
-                    slug={tenant.slug}
-                    onShown={() => setMobileMenuOpen(false)}
-                  />
+                {tenant.resident || (tenant.status === 'live' && tenant.stream?.twitch && tenant.socials.twitch) ? (
+                  <div className="mt-3 space-y-0.5 border-t border-stroke-weak pt-3 [&>button]:mt-0">
+                    {tenant.resident ? (
+                      <ResidentDockRestoreButton
+                        slug={tenant.slug}
+                        onShown={() => setMobileMenuOpen(false)}
+                      />
+                    ) : null}
+                    {tenant.status === 'live' && tenant.stream?.twitch && tenant.socials.twitch ? (
+                      <StreamDockRestoreButton
+                        slug={tenant.slug}
+                        onShown={() => setMobileMenuOpen(false)}
+                      />
+                    ) : null}
+                  </div>
                 ) : null}
               </div>
             </div>
@@ -1020,6 +1266,12 @@ export function TenantApp({ slug, coin }: Props) {
             }
             onOpenFees={() => setFeesOpen(true)}
             onNotify={notify}
+            tradeAddress={book === 'resident' ? tradeAddress : null}
+            getTradeProvider={
+              book === 'resident' && canUseResidentBook
+                ? () => getResidentEthereumProvider(residentWallet)
+                : null
+            }
           />
         </div>
         <div
@@ -1027,7 +1279,7 @@ export function TenantApp({ slug, coin }: Props) {
           className="h-[min(420px,48svh)] min-h-[300px] min-w-0 border-t border-stroke-weak lg:col-span-3"
         >
           <AccountDock
-            address={address}
+            address={tradeAddress}
             catalog={tenant.catalog}
             assets={catalogQ.data ?? []}
             clearing={account.clearing}
@@ -1042,7 +1294,13 @@ export function TenantApp({ slug, coin }: Props) {
             builderClearing={isOwner ? builderAccount.clearing : null}
             tenantBuilderAddress={tenant.builder_address}
             appName={tenant.app_name}
+            residentSlug={tenant.resident ? tenant.slug : null}
+            residentCanManage={isOwner}
+            residentFeeTenths={tenant.builder_fee_tenths}
+            residentBuilderAddress={tenant.builder_address}
+            residentCloidPrefix={tenant.cloid_prefix}
             closingCoin={closingCoin}
+            closingAll={closingAll}
             closeError={closeError}
             confirmClose={(() => {
               void prefsTick;
@@ -1053,6 +1311,7 @@ export function TenantApp({ slug, coin }: Props) {
               return getSpotDusting(address);
             })()}
             onClosePosition={(p) => void closePosition(p)}
+            onCloseAllPositions={(rows) => void closeAllPositions(rows)}
             onOpenTpsl={(p, markPx) => {
               const entrySide = p.szi > 0 ? 'long' : 'short';
               const existing = account.orders.filter(
@@ -1082,17 +1341,22 @@ export function TenantApp({ slug, coin }: Props) {
               });
             }}
             cancellingOid={cancellingOid}
+            cancellingAll={cancellingAll}
             cancelError={cancelError}
             onCancelOrder={(o) => void cancelOrder(o)}
+            onCancelAllOrders={(rows) => void cancelAllOrders(rows)}
             onEditOrder={openEditOrder}
           />
         </div>
       </div>
 
-      <footer className="flex flex-col gap-2 border-t border-stroke-weak bg-background px-3 py-2.5 text-[11px] text-fg-subtle sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-        <p className="min-w-0 font-semibold leading-5">
-          © {new Date().getFullYear()} {tenant.app_name}{' '}
-          <span className="font-medium">
+      <footer className="flex flex-col gap-2 border-t border-stroke-weak bg-background px-3 py-2.5 text-[11px] font-semibold leading-relaxed text-fg-subtle sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+        <p className="min-w-0">
+          © {new Date().getFullYear()} {tenant.app_name}
+          <span className="mx-2 hidden text-stroke-strong sm:inline" aria-hidden>
+            ·
+          </span>
+          <span className="block sm:inline font-medium">
             Trading involves risk. Not available in restricted jurisdictions.
           </span>
         </p>
@@ -1217,10 +1481,28 @@ export function TenantApp({ slug, coin }: Props) {
       />
       <PnlShareModal payload={pnlShare} onClose={() => setPnlShare(null)} />
       <TradeToast toast={toast} onDismiss={dismissToast} />
+      {tenant.resident ? <ResidentDock tenant={tenant} slotRef={residentSlotRef} /> : null}
       {tenant.status === 'live' && tenant.stream?.twitch && tenant.socials.twitch ? (
         <StreamDock slug={tenant.slug} channel={tenant.socials.twitch} slotRef={streamSlotRef} />
       ) : null}
     </div>
+  );
+}
+
+function looksRateLimited(err: unknown): boolean {
+  const msg =
+    typeof err === 'string'
+      ? err
+      : err instanceof Error
+        ? err.message
+        : String((err as { message?: unknown })?.message ?? '');
+  const s = msg.toLowerCase();
+  return (
+    s.includes('429') ||
+    s.includes('rate limit') ||
+    s.includes('rate-limit') ||
+    s.includes('too many requests') ||
+    s.includes('throttled')
   );
 }
 

@@ -4483,7 +4483,7 @@ async def get_tenant_resident(slug: str):
     import ai_agent_showcase as showcase_mod  # local: defined later in this module's import order
 
     book = await showcase_mod.build_agents_payload_cached(
-        tid, agent_ids, supabase=supabase, fetch_hl=fetch_hyperliquid
+        tid, agent_ids, supabase=supabase, fetch_hl=fetch_hyperliquid, decision_limit=120
     )
     voice_rows: List[Dict[str, Any]] = []
     try:

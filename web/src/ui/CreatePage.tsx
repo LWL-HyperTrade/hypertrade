@@ -83,11 +83,13 @@ const EMPTY: Draft = {
   coin: EMPTY_COIN_TERMS,
 };
 
-function loadDraft(): Draft {
+function loadDraft(userId: string | null): Draft {
   try {
     const raw = sessionStorage.getItem(DRAFT_KEY);
     if (!raw) return EMPTY;
-    const parsed = JSON.parse(raw) as Partial<Draft>;
+    const parsed = JSON.parse(raw) as Partial<Draft> & { userId?: string };
+    // Untagged drafts are from before login scoping — do not apply them to this account.
+    if (!userId || parsed.userId !== userId) return EMPTY;
     return {
       ...EMPTY,
       ...parsed,
@@ -151,11 +153,13 @@ function draftFromTenant(row: TenantPublic): Draft {
 }
 
 export function CreatePage() {
-  const { authenticated, getAccessToken, address, login, socials, linkSocial, unlinkSocial, linkError } = useWebAuth();
+  const { authenticated, userId, ready, getAccessToken, address, login, socials, linkSocial, unlinkSocial, linkError } =
+    useWebAuth();
   const pair = useEnsureBuilderWallets();
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const [d, setD] = useState<Draft>(loadDraft);
+  const [d, setD] = useState<Draft>(EMPTY);
+  const draftOwner = useRef<string | null | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nudge, setNudge] = useState<string[] | null>(null);
@@ -169,8 +173,8 @@ export function CreatePage() {
 
   const quotes = usePonsQuotes();
   const mine = useQuery({
-    queryKey: ['my-tenants'],
-    enabled: authenticated,
+    queryKey: ['my-tenants', userId],
+    enabled: authenticated && !!userId,
     queryFn: async () => {
       const token = await getAccessToken();
       if (!token) throw new Error('Sign in again');
@@ -186,7 +190,18 @@ export function CreatePage() {
   const launchOpen = gate.data === true;
 
   useEffect(() => {
-    if (!mine.data || hydrated.current) return;
+    if (!ready) return;
+    const id = authenticated ? userId : null;
+    if (draftOwner.current === id) return;
+    draftOwner.current = id;
+    hydrated.current = false;
+    setD(loadDraft(id));
+    setDraftSlug(null);
+  }, [ready, authenticated, userId]);
+
+  useEffect(() => {
+    if (!userId || draftOwner.current !== userId) return;
+    if (!mine.isSuccess || mine.isFetching || hydrated.current) return;
     hydrated.current = true;
 
     // Resume an unfinished app draft from the server.
@@ -197,32 +212,30 @@ export function CreatePage() {
       return;
     }
 
-    // Drop a leftover browser draft only when that app is live *and* has a token.
-    // Keep local state if the app is still a draft, or live without a coin yet.
+    // Drop a leftover browser draft once that handle is live (preview or own).
+    // Token-later lives on My apps — the wizard must not reopen as the same app.
     const localSlug = normalizeTenantSlug(d.slug);
-    if (
-      localSlug &&
-      mine.data.some((t) => t.slug === localSlug && isAppAndTokenDone(t))
-    ) {
+    if (localSlug && mine.data.some((t) => t.slug === localSlug && t.status === 'live')) {
       clearDraftStorage();
       setD(EMPTY);
       setDraftSlug(null);
       setPublished(null);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- hydrate once when mine arrives
-  }, [mine.data]);
+  }, [userId, mine.isSuccess, mine.isFetching, mine.data]);
 
   useEffect(() => {
+    if (!ready || draftOwner.current !== (authenticated ? userId : null)) return;
     try {
       if (isEmptyDraft(d)) {
         sessionStorage.removeItem(DRAFT_KEY);
         return;
       }
-      sessionStorage.setItem(DRAFT_KEY, JSON.stringify(d));
+      if (!userId) return;
+      sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ ...d, userId }));
     } catch {
       /* private mode */
     }
-  }, [d]);
+  }, [d, ready, authenticated, userId]);
 
   useEffect(() => {
     if (d.chapter !== 2 || !draftSlug) return;
@@ -329,10 +342,9 @@ export function CreatePage() {
     snipeTaxExemptions: parseTeamWallets(d.coin.teamWallets).valid,
   });
 
-  // Clear local wizard only after a full app + token launch. App-only publish
-  // (or live-without-coin) keeps the form so LaunchCoinLater / retry still has context.
-  const resetWizardIf = (clear: boolean) => {
-    if (!clear) return;
+  // Any live publish (preview app or with a token) clears the wizard. Coin-later
+  // is My apps → Launch token; leaving the form filled made /create look stuck.
+  const resetWizard = () => {
     clearDraftStorage();
     setD(EMPTY);
     setDraftSlug(null);
@@ -341,12 +353,13 @@ export function CreatePage() {
     setNudge(null);
   };
 
-  const finish = (slug: string, opts?: { clearWizard?: boolean }) => {
-    resetWizardIf(!!opts?.clearWizard);
+  const finish = (slug: string) => {
+    resetWizard();
     goToTenantApp(slug, navigate);
   };
 
   const celebrate = (tenant: TenantPublic, tokenLaunched: boolean) => {
+    resetWizard();
     setSuccess({ tenant, tokenLaunched });
   };
 
@@ -431,7 +444,6 @@ export function CreatePage() {
       if (withCoin && launchOpen) {
         setPublished({ tenant, coin: coinDraftFor() });
       } else {
-        // App live, token skipped or gated — keep wizard in session until a coin exists.
         celebrate(tenant, false);
       }
     } catch (e) {
@@ -495,7 +507,7 @@ export function CreatePage() {
 
   const leaveToMyApps = () => {
     if (!success) return;
-    resetWizardIf(success.tokenLaunched);
+    resetWizard();
     setSuccess(null);
     navigate('/apps');
   };
@@ -503,7 +515,7 @@ export function CreatePage() {
     <LaunchSuccessModal
       tenant={success.tenant}
       tokenLaunched={success.tokenLaunched}
-      onOpenApp={() => finish(success.tenant.slug, { clearWizard: success.tokenLaunched })}
+      onOpenApp={() => finish(success.tenant.slug)}
       onMyApps={leaveToMyApps}
       onClose={leaveToMyApps}
     />
@@ -544,7 +556,7 @@ export function CreatePage() {
               slug={published.tenant.slug}
               draft={published.coin}
               onDone={(tenant) => celebrate(tenant, isAppAndTokenDone(tenant))}
-              onCancel={() => finish(published.tenant.slug, { clearWizard: false })}
+              onCancel={() => finish(published.tenant.slug)}
               cancelLabel="Open the app"
             />
           ) : null}

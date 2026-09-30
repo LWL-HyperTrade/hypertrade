@@ -344,6 +344,7 @@ def _flatten_hl_order(order: Dict[str, Any]) -> Dict[str, Any]:
         return order
     merged = {**inner, **order}
     for key in (
+        "oid",
         "coin",
         "side",
         "limitPx",
@@ -568,6 +569,7 @@ def _hl_live_position_row(
         "marginUsed": live.get("marginUsed"),
         "fundingUsd": funding_usd,
         "manual": manual,
+        "szi": szi,
     }
 
 
@@ -800,6 +802,8 @@ def _opening_from_row(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     entry = dec.get("entryPrice") or dec.get("entry_price")
     stop = dec.get("stop_price") or dec.get("stopPrice")
     tp = dec.get("take_profit_target") or dec.get("takeProfit")
+    size = dec.get("sizeUsd") or dec.get("plannedSizeUsd")
+    lev = dec.get("leverage")
     reasoning = ""
     if isinstance(dec.get("reasoning"), str):
         reasoning = dec["reasoning"].strip()
@@ -814,6 +818,8 @@ def _opening_from_row(row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "entryPrice": float(entry) if _is_num(entry) else None,
         "stopPrice": float(stop) if _is_num(stop) else None,
         "takeProfit": float(tp) if _is_num(tp) else None,
+        "sizeUsd": float(size) if _is_num(size) else None,
+        "leverage": float(lev) if _is_num(lev) else None,
     }
 
 
@@ -853,6 +859,7 @@ async def _build_agent_payload(
     supabase: Any,
     fetch_hl: _FetchHl,
     shared_mids: Dict[str, float],
+    decision_limit: int = 8,
 ) -> Tuple[Dict[str, Any], bool]:
     """Build one agent slice. Returns (payload, critical_ok).
 
@@ -1117,6 +1124,7 @@ async def _build_agent_payload(
             side = "LONG" if is_buy else "SHORT"
         sz_raw = o.get("sz") if o.get("sz") is not None else o.get("size")
         sz = float(sz_raw) if _is_num(sz_raw) else None
+        oid = int(o["oid"]) if _is_num(o.get("oid")) else None
         open_orders.append(
             {
                 "symbol": coin,
@@ -1128,6 +1136,7 @@ async def _build_agent_payload(
                 "size": sz if (sz is not None and sz > 0) else None,
                 "reduceOnly": bool(o.get("reduceOnly")),
                 "isTrigger": is_trigger,
+                "oid": oid,
             }
         )
 
@@ -1214,7 +1223,7 @@ async def _build_agent_payload(
         .select("id,symbol,type,decision,created_at")
         .eq("agent_id", row["id"])
         .order("created_at", desc=True)
-        .limit(40)
+        .limit(max(1, decision_limit))
         .execute()
     )
     decisions_raw = dec_res.data or []
@@ -1239,7 +1248,7 @@ async def _build_agent_payload(
         _slim_decision_row(d)
         for d in decisions_raw
         if _showcase_decision_visible(str(d.get("type") or ""))
-    ][:8]
+    ][: max(1, decision_limit)]
 
     indexed_now = equity[-1]["indexed"] if equity else BASELINE_USD
     max_capital = (
@@ -1296,6 +1305,7 @@ async def build_agents_payload(
     *,
     supabase: Any,
     fetch_hl: _FetchHl,
+    decision_limit: int = 8,
 ) -> Tuple[Dict[str, Any], bool]:
     """Public read-only slice for an explicit agent-id list (house showcase or
     a BuilderPad resident app — docs/RESIDENTS.md). Returns (payload, all_ok)."""
@@ -1359,6 +1369,7 @@ async def build_agents_payload(
                 supabase=supabase,
                 fetch_hl=fetch_hl,
                 shared_mids=shared_mids,
+                decision_limit=decision_limit,
             )
             for row in ordered
         ]
@@ -1416,8 +1427,10 @@ async def build_agents_payload_cached(
     *,
     supabase: Any,
     fetch_hl: _FetchHl,
+    decision_limit: int = 8,
 ) -> Dict[str, Any]:
     now = time.time()
+    key = f"{key}:{decision_limit}"
     entry = _KEYED_CACHE.get(key)
     if entry and entry.get("ids") == ids and now - float(entry.get("ts") or 0) < SHOWCASE_CACHE_TTL_SEC:
         return entry["payload"]
@@ -1430,7 +1443,9 @@ async def build_agents_payload_cached(
             return entry["payload"]
         stale = entry["payload"] if entry and entry.get("ids") == ids else None
         try:
-            payload, all_ok = await build_agents_payload(ids, supabase=supabase, fetch_hl=fetch_hl)
+            payload, all_ok = await build_agents_payload(
+                ids, supabase=supabase, fetch_hl=fetch_hl, decision_limit=decision_limit
+            )
         except asyncio.CancelledError:
             raise
         except Exception:

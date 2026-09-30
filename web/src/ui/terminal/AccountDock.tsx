@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { AssetRow } from '../../lib/tenants';
 import { catalogAllows } from './catalogMatch';
@@ -21,11 +21,12 @@ import {
   type SpotBalance,
   type UserFill,
 } from '../../lib/hlMarket';
-import { IconApp, IconCash, IconCheck, IconChevron, IconCopy, IconExternal, IconWallet } from '../icons';
+import { IconBot, IconCash, IconCheck, IconChevron, IconCopy, IconExternal, IconWallet } from '../icons';
+import { ResidentDecisionsDock } from '../resident/ResidentDecisions';
+import { fetchTenantResident } from '../../lib/api';
 import { shortAddr } from '../../lib/tenants';
 import { ScrollFadeX } from '../ScrollFadeX';
 import { useWebAuth } from '../../lib/auth';
-import { consoleHref } from '../../lib/config';
 import { useHlSetupStatus } from '../../lib/useHlAutoSetup';
 import { SPOT_DUST_USD } from '../../lib/tradePrefs';
 import { formatEarnedUsd } from '../../lib/earnings';
@@ -44,7 +45,7 @@ import {
   type Hex,
 } from '../../lib/hlTrade';
 
-type Tab = 'positions' | 'orders' | 'history' | 'trades' | 'balances' | 'builder';
+type Tab = 'positions' | 'orders' | 'history' | 'trades' | 'balances' | 'builder' | 'resident';
 type Position = Clearinghouse['positions'][number];
 
 type Props = {
@@ -69,6 +70,8 @@ type Props = {
   closingCoin?: string | null;
   closeError?: string | null;
   onClosePosition?: (position: Position) => void;
+  onCloseAllPositions?: (positions: Position[]) => void;
+  closingAll?: boolean;
   /** When false, Close skips the Confirm step. */
   confirmClose?: boolean;
   onOpenTpsl?: (position: Position, markPx: number) => void;
@@ -83,6 +86,8 @@ type Props = {
   cancellingOid?: number | null;
   cancelError?: string | null;
   onCancelOrder?: (order: OpenOrder) => void;
+  onCancelAllOrders?: (orders: OpenOrder[]) => void;
+  cancellingAll?: boolean;
   onEditOrder?: (order: OpenOrder) => void;
   /** Hide spot tokens worth under $0.10. Default on. */
   spotDusting?: boolean;
@@ -91,6 +96,13 @@ type Props = {
   builderClearing?: Clearinghouse | null;
   tenantBuilderAddress?: string | null;
   appName?: string | null;
+  /** When set, the desk shows an AI Resident tab for this app. */
+  residentSlug?: string | null;
+  /** Owner of the app — close/cancel on the resident book. */
+  residentCanManage?: boolean;
+  residentFeeTenths?: number;
+  residentBuilderAddress?: string | null;
+  residentCloidPrefix?: string;
 };
 
 export function AccountDock({
@@ -108,18 +120,27 @@ export function AccountDock({
   closingCoin,
   closeError,
   onClosePosition,
+  onCloseAllPositions,
+  closingAll = false,
   confirmClose = true,
   onOpenTpsl,
   onSharePnl,
   cancellingOid,
   cancelError,
   onCancelOrder,
+  onCancelAllOrders,
+  cancellingAll = false,
   onEditOrder,
   spotDusting = true,
   builderAddress = null,
   builderClearing = null,
   tenantBuilderAddress = null,
   appName = null,
+  residentSlug = null,
+  residentCanManage = false,
+  residentFeeTenths = 0,
+  residentBuilderAddress = null,
+  residentCloidPrefix = 'bp',
 }: Props) {
   const { authenticated, address: authAddress, getEthereumProvider, getBuilderEthereumProvider, switchBuilderChain } =
     useWebAuth();
@@ -127,8 +148,20 @@ export function AccountDock({
   const [tab, setTab] = useState<Tab>('positions');
   const [confirmCoin, setConfirmCoin] = useState<string | null>(null);
   const [confirmOid, setConfirmOid] = useState<number | null>(null);
+  const [confirmCloseAll, setConfirmCloseAll] = useState(false);
+  const [confirmCancelAll, setConfirmCancelAll] = useState(false);
   const positions = (clearing?.positions ?? []).filter((p) => catalogAllows(catalog, p.coin, assets));
   const open = orders.filter((o) => catalogAllows(catalog, o.coin, assets));
+
+  useEffect(() => {
+    if (!builderAddress && tab === 'builder') setTab('positions');
+  }, [builderAddress, tab]);
+  useEffect(() => {
+    if (positions.length < 2) setConfirmCloseAll(false);
+  }, [positions.length]);
+  useEffect(() => {
+    if (open.length < 2) setConfirmCancelAll(false);
+  }, [open.length]);
 
   const positionCoinsKey = positions
     .map((p) => p.coin)
@@ -198,18 +231,30 @@ export function AccountDock({
   const builderSpot = (builderClearing?.spotBalances ?? []).filter((b) => b.coin.toUpperCase() !== 'USDC').length;
   const builderN = builderAddress ? 2 + builderSpot : 0;
   const showBuilderTab = !!builderAddress;
+  const residentQ = useQuery({
+    queryKey: ['tenant-resident', residentSlug],
+    enabled: !!residentSlug,
+    queryFn: () => fetchTenantResident(residentSlug!),
+    refetchInterval: 30_000,
+    staleTime: 10_000,
+  });
+  const residentName = residentQ.data?.agents?.[0]?.name?.trim() || 'AI Resident';
+  const residentPosN = (residentQ.data?.agents ?? []).reduce(
+    (n, a) => n + (a.positions ?? []).filter((p) => p.manual !== true).length,
+    0,
+  );
   const tabs: { id: Tab; label: string }[] = [
     { id: 'positions', label: `Live Positions (${positions.length})` },
     { id: 'orders', label: `Open Orders (${open.length})` },
     { id: 'history', label: 'Order History' },
     { id: 'trades', label: 'Trade History' },
+    ...(residentSlug ? [{ id: 'resident' as const, label: `${residentName} (${residentPosN})` }] : []),
     { id: 'balances', label: portfolioN ? `Portfolio (${portfolioN})` : 'Portfolio' },
     ...(showBuilderTab
       ? [{ id: 'builder' as const, label: builderN ? `My Builder Wallet (${builderN})` : 'My Builder Wallet' }]
       : []),
   ];
   const headerClearing = tab === 'builder' ? builderClearing : clearing;
-  const projectsHref = showBuilderTab ? consoleHref('/apps') : null;
 
   return (
     <div className="flex h-full min-h-0 flex-col border-t border-stroke-weak bg-background">
@@ -223,50 +268,43 @@ export function AccountDock({
                 ) : null}
                 <button
                   type="button"
-                  onClick={() => setTab(id)}
+                  onClick={() => {
+                    setTab(id);
+                    setConfirmCloseAll(false);
+                    setConfirmCancelAll(false);
+                  }}
                   className={`shrink-0 px-3 py-2.5 text-[12px] font-bold ${
                     tab === id
-                      ? id === 'balances'
-                        ? 'border-b-2 border-market-up text-fg'
-                        : id === 'builder'
-                          ? 'border-b-2 border-brand text-fg'
+                      ? id === 'balances' || id === 'builder'
+                        ? 'border-b-2 border-brand text-fg'
+                        : id === 'resident'
+                          ? 'border-b-2 border-[#5b9cff] text-fg'
                           : 'border-b-2 border-brand text-fg'
                       : 'border-b-2 border-transparent text-fg-subtle hover:text-fg'
                   }`}
                 >
-                  {id === 'balances' ? (
-                    <span
-                      className={`inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 font-extrabold ${
-                        tab === id ? 'bg-market-up text-black' : 'bg-market-up/25 text-market-up'
-                      }`}
-                    >
-                      <IconWallet size={13} />
-                      {label}
-                    </span>
-                  ) : id === 'builder' ? (
+                  {id === 'balances' || id === 'builder' ? (
                     <span
                       className={`inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 font-extrabold ${
                         tab === id ? 'bg-brand text-[#06140c]' : 'bg-brand/20 text-brand'
                       }`}
                     >
-                      <IconCash size={13} />
+                      {id === 'balances' ? <IconWallet size={13} /> : <IconCash size={13} />}
+                      {label}
+                    </span>
+                  ) : id === 'resident' ? (
+                    <span
+                      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-md px-2 py-0.5 font-extrabold ${
+                        tab === id ? 'bg-[#5b9cff] text-[#06140c]' : 'bg-[#5b9cff]/20 text-[#8ebfff]'
+                      }`}
+                    >
+                      <IconBot size={13} />
                       {label}
                     </span>
                   ) : (
                     label
                   )}
                 </button>
-                {id === 'builder' && projectsHref ? (
-                  <a
-                    href={projectsHref}
-                    className="shrink-0 border-b-2 border-transparent py-2.5 pl-0.5 pr-2 text-[12px] font-bold text-fg-subtle hover:text-fg"
-                  >
-                    <span className="inline-flex items-center gap-1.5 rounded-md bg-brand/20 px-2 py-0.5 font-extrabold text-brand hover:bg-brand/30">
-                      <IconApp size={13} />
-                      My Builder Projects
-                    </span>
-                  </a>
-                ) : null}
               </span>
             ))}
           </div>
@@ -290,13 +328,26 @@ export function AccountDock({
               onSelectMarket={onSelectMarket}
               canTrade={!!canTrade && !!onClosePosition}
               closingCoin={closingCoin ?? null}
+              closingAll={closingAll}
               confirmCoin={confirmCoin}
               confirmClose={confirmClose}
+              confirmCloseAll={confirmCloseAll}
+              onAskCloseAll={() => {
+                if (positions.length < 2 || !onCloseAllPositions) return;
+                setConfirmCoin(null);
+                setConfirmCloseAll(true);
+              }}
+              onConfirmCloseAll={() => {
+                setConfirmCloseAll(false);
+                onCloseAllPositions?.(positions);
+              }}
+              onBackCloseAll={() => setConfirmCloseAll(false)}
               onAskClose={(coin) => {
                 if (!coin) {
                   setConfirmCoin(null);
                   return;
                 }
+                setConfirmCloseAll(false);
                 if (!confirmClose) {
                   const p = positions.find((row) => row.coin === coin);
                   if (p) onClosePosition?.(p);
@@ -320,8 +371,23 @@ export function AccountDock({
               positions={positions}
               canTrade={!!canTrade && !!onCancelOrder}
               cancellingOid={cancellingOid ?? null}
+              cancellingAll={cancellingAll}
               confirmOid={confirmOid}
-              onAskCancel={setConfirmOid}
+              confirmCancelAll={confirmCancelAll}
+              onAskCancelAll={() => {
+                if (open.length < 2 || !onCancelAllOrders) return;
+                setConfirmOid(null);
+                setConfirmCancelAll(true);
+              }}
+              onConfirmCancelAll={() => {
+                setConfirmCancelAll(false);
+                onCancelAllOrders?.(open);
+              }}
+              onBackCancelAll={() => setConfirmCancelAll(false)}
+              onAskCancel={(oid) => {
+                setConfirmCancelAll(false);
+                setConfirmOid(oid);
+              }}
               onConfirmCancel={(o) => {
                 setConfirmOid(null);
                 onCancelOrder?.(o);
@@ -342,6 +408,14 @@ export function AccountDock({
           ) : (
             <FillsTable rows={fills} />
           )
+        ) : tab === 'resident' && residentSlug ? (
+          <ResidentDecisionsDock
+            slug={residentSlug}
+            canManage={residentCanManage}
+            feeTenths={residentFeeTenths}
+            builderAddress={residentBuilderAddress}
+            cloidPrefix={residentCloidPrefix}
+          />
         ) : tab === 'builder' && builderAddress ? (
           <>
             <BuilderClaimBar
@@ -428,6 +502,71 @@ function MarketNavSymbol({
   );
 }
 
+function BulkHeaderAction({
+  label,
+  bulkLabel,
+  busyLabel,
+  show,
+  confirming,
+  busy,
+  onAsk,
+  onConfirm,
+  onBack,
+}: {
+  label: string;
+  bulkLabel: string;
+  busyLabel: string;
+  show: boolean;
+  confirming: boolean;
+  busy: boolean;
+  onAsk: () => void;
+  onConfirm: () => void;
+  onBack: () => void;
+}) {
+  if (show && confirming) {
+    return (
+      <span className="inline-flex items-center justify-end gap-1.5">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onConfirm}
+          className="font-semibold text-market-down hover:underline disabled:opacity-40"
+        >
+          {busy ? busyLabel : 'Confirm'}
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={onBack}
+          className="text-fg-subtle hover:underline disabled:opacity-40"
+        >
+          Back
+        </button>
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center justify-end gap-1.5">
+      {show ? (
+        <>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onAsk}
+            className="font-semibold text-brand hover:underline disabled:opacity-40"
+          >
+            {busy ? busyLabel : bulkLabel}
+          </button>
+          <span className="text-fg-subtle/50" aria-hidden>
+            |
+          </span>
+        </>
+      ) : null}
+      {label}
+    </span>
+  );
+}
+
 function PositionsTable({
   positions,
   markByCoin,
@@ -437,8 +576,13 @@ function PositionsTable({
   onSelectMarket,
   canTrade,
   closingCoin,
+  closingAll,
   confirmCoin,
   confirmClose,
+  confirmCloseAll,
+  onAskCloseAll,
+  onConfirmCloseAll,
+  onBackCloseAll,
   onAskClose,
   onConfirmClose,
   onOpenTpsl,
@@ -452,8 +596,13 @@ function PositionsTable({
   onSelectMarket?: (coin: string) => void;
   canTrade: boolean;
   closingCoin: string | null;
+  closingAll: boolean;
   confirmCoin: string | null;
   confirmClose: boolean;
+  confirmCloseAll: boolean;
+  onAskCloseAll: () => void;
+  onConfirmCloseAll: () => void;
+  onBackCloseAll: () => void;
   onAskClose: (coin: string | null) => void;
   onConfirmClose: (position: Position) => void;
   onOpenTpsl?: (position: Position, markPx: number) => void;
@@ -484,7 +633,21 @@ function PositionsTable({
             <Th className="w-[8%] text-right">Liq. Price</Th>
             <Th className="w-[7%] text-right">Margin</Th>
             <Th className="w-[7%] text-right">Funding</Th>
-            {canTrade ? <Th className="w-[11%] text-right">Close</Th> : null}
+            {canTrade ? (
+              <Th className="w-[11%] text-right">
+                <BulkHeaderAction
+                  label="Close"
+                  bulkLabel="Close all"
+                  busyLabel="Closing…"
+                  show={positions.length > 1}
+                  confirming={confirmCloseAll}
+                  busy={closingAll}
+                  onAsk={onAskCloseAll}
+                  onConfirm={onConfirmCloseAll}
+                  onBack={onBackCloseAll}
+                />
+              </Th>
+            ) : null}
           </tr>
         </thead>
         <tbody>
@@ -502,7 +665,7 @@ function PositionsTable({
                 : p.returnOnEquity != null
                   ? p.returnOnEquity * 100
                   : null;
-            const busy = closingCoin === p.coin;
+            const busy = closingAll || closingCoin === p.coin;
             const confirm = confirmClose && confirmCoin === p.coin;
             const openedAt = openedAtByCoin.get(p.coin) ?? null;
             return (
@@ -632,7 +795,12 @@ function OrdersTable({
   positions,
   canTrade,
   cancellingOid,
+  cancellingAll,
   confirmOid,
+  confirmCancelAll,
+  onAskCancelAll,
+  onConfirmCancelAll,
+  onBackCancelAll,
   onAskCancel,
   onConfirmCancel,
   onEditOrder,
@@ -641,7 +809,12 @@ function OrdersTable({
   positions: Position[];
   canTrade: boolean;
   cancellingOid: number | null;
+  cancellingAll: boolean;
   confirmOid: number | null;
+  confirmCancelAll: boolean;
+  onAskCancelAll: () => void;
+  onConfirmCancelAll: () => void;
+  onBackCancelAll: () => void;
   onAskCancel: (oid: number | null) => void;
   onConfirmCancel: (order: OpenOrder) => void;
   onEditOrder?: (order: OpenOrder) => void;
@@ -665,7 +838,21 @@ function OrdersTable({
             <Th className="w-[9%] text-right">Price</Th>
             <Th className="w-[9%] text-right">Trigger</Th>
             <Th className="w-[7%] text-center">Reduce Only</Th>
-            {canTrade ? <Th className="w-[10%] text-right"> </Th> : null}
+            {canTrade ? (
+              <Th className="w-[10%] text-right">
+                <BulkHeaderAction
+                  label="Cancel"
+                  bulkLabel="Cancel all"
+                  busyLabel="Cancelling…"
+                  show={orders.length > 1}
+                  confirming={confirmCancelAll}
+                  busy={cancellingAll}
+                  onAsk={onAskCancelAll}
+                  onConfirm={onConfirmCancelAll}
+                  onBack={onBackCancelAll}
+                />
+              </Th>
+            ) : null}
           </tr>
         </thead>
         <tbody>
@@ -692,7 +879,7 @@ function OrdersTable({
                   : o.tpsl === 'sl'
                     ? 'Stop Loss'
                     : o.orderType || 'Limit';
-            const busy = cancellingOid === o.oid;
+            const busy = cancellingAll || cancellingOid === o.oid;
             const confirm = confirmOid === o.oid;
             return (
               <tr
@@ -1403,7 +1590,7 @@ function BuilderClaimBar({
   );
 }
 
-function Th({ children, className = '' }: { children: string; className?: string }) {
+function Th({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <th className={`whitespace-nowrap px-3 py-2 font-medium ${className}`}>{children}</th>;
 }
 

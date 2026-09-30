@@ -36,6 +36,7 @@ Default fork path = **Tier 1 only**. See [docs/FORKING.md](./docs/FORKING.md) an
 | [docs/BANKING_UR.md](./docs/BANKING_UR.md) | Neobank / UR banking fork guide (short) |
 | [docs/BUILDERPAD.md](./docs/BUILDERPAD.md) | BuilderPad web product (`web/` → builderpad.xyz); branded `{slug}.builderpad.xyz` HL apps |
 | [docs/PONS_FORK.md](./docs/PONS_FORK.md) | Optional BuilderPad coin chapter — Pons v2 factory fork (Robinhood 4663) |
+| [docs/RESIDENTS.md](./docs/RESIDENTS.md) | Optional BuilderPad **Residents** — AI agents (Tier 2) that live on a `{slug}.builderpad.xyz` app with a VRM avatar; orders carry the app's builder code |
 | [SECURITY.md](./SECURITY.md) | Secrets hygiene |
 
 ---

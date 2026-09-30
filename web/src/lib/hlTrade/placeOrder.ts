@@ -20,11 +20,13 @@
  * parallel (same as mobile). The order POST still waits for both.
  */
 import { formatPrice, formatSize } from '@nktkas/hyperliquid/utils';
+import type { ExchangeClient } from '@nktkas/hyperliquid';
 import { getAssetIdAndMeta } from './assetId';
-import { createAgentExchangeClient, hlInfo } from './clients';
+import { createAgentExchangeClient, hlInfo, withUserSignedExchange } from './clients';
 import { getUserAbstractionMode } from './setup';
 import { extractHlOid, getPerpOrderAcceptanceError, makeTenantCloid } from './cloid';
 import { clampTenantFeeTenths, orderBuilderAddress, type Hex } from './constants';
+import type { Eip1193Provider } from './wallet';
 
 export type DeskOrderType =
   | 'market'
@@ -513,12 +515,32 @@ export async function cancelDeskOrder(args: {
   symbol: string;
   oid: number;
 }): Promise<unknown> {
-  if (!Number.isFinite(args.oid) || args.oid <= 0) {
+  const exchange = createAgentExchangeClient(args.agentPrivateKey);
+  return cancelOnExchange(exchange, args.symbol, args.oid);
+}
+
+/** Resident (or any master) cancels with their own wallet, not the worker key. */
+export async function cancelUserOrder(args: {
+  provider: Eip1193Provider;
+  userAddress: Hex;
+  symbol: string;
+  oid: number;
+}): Promise<unknown> {
+  return withUserSignedExchange(args.provider, args.userAddress, (exchange) =>
+    cancelOnExchange(exchange, args.symbol, args.oid),
+  );
+}
+
+async function cancelOnExchange(
+  exchange: Pick<ExchangeClient, 'cancel'>,
+  symbol: string,
+  oid: number,
+): Promise<unknown> {
+  if (!Number.isFinite(oid) || oid <= 0) {
     throw new Error('Invalid order id');
   }
-  const { assetId } = await getAssetIdAndMeta(args.symbol);
-  const exchange = createAgentExchangeClient(args.agentPrivateKey);
-  return exchange.cancel({ cancels: [{ a: assetId, o: args.oid }] });
+  const { assetId } = await getAssetIdAndMeta(symbol);
+  return exchange.cancel({ cancels: [{ a: assetId, o: oid }] });
 }
 
 /**
@@ -645,6 +667,37 @@ export async function marketCloseDeskPosition(args: {
   cloidPrefix: string;
   builderAddress?: string | null;
 }): Promise<PlaceDeskOrderResult & { side: 'buy' | 'sell'; notionalUsd: number; referencePx: number }> {
+  const exchange = createAgentExchangeClient(args.agentPrivateKey);
+  return submitMarketClose(exchange, args);
+}
+
+/** Same close, signed by the resident wallet instead of the worker agent key. */
+export async function marketCloseUserPosition(args: {
+  provider: Eip1193Provider;
+  userAddress: Hex;
+  symbol: string;
+  szi: number;
+  oraclePx?: number;
+  feeTenths: number;
+  cloidPrefix: string;
+  builderAddress?: string | null;
+}): Promise<PlaceDeskOrderResult & { side: 'buy' | 'sell'; notionalUsd: number; referencePx: number }> {
+  return withUserSignedExchange(args.provider, args.userAddress, (exchange) =>
+    submitMarketClose(exchange, args),
+  );
+}
+
+async function submitMarketClose(
+  exchange: Pick<ExchangeClient, 'order'>,
+  args: {
+    symbol: string;
+    szi: number;
+    oraclePx?: number;
+    feeTenths: number;
+    cloidPrefix: string;
+    builderAddress?: string | null;
+  },
+): Promise<PlaceDeskOrderResult & { side: 'buy' | 'sell'; notionalUsd: number; referencePx: number }> {
   if (!Number.isFinite(args.szi) || args.szi === 0) {
     throw new Error('No position');
   }
@@ -679,7 +732,6 @@ export async function marketCloseDeskPosition(args: {
   const p = formatPrice(pxRaw, szDecimals, 'perp');
   const cloid = makeTenantCloid(args.cloidPrefix);
   const feeTenths = clampTenantFeeTenths(args.feeTenths);
-  const exchange = createAgentExchangeClient(args.agentPrivateKey);
 
   const result = await exchange.order({
     orders: [

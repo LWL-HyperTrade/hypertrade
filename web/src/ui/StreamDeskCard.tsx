@@ -81,9 +81,7 @@ export function StreamDeskCard({ tenant }: { tenant: TenantPublic }) {
         <p className="mt-0.5 text-[11px] text-fg-subtle">
           {handle ? (
             <>
-              Twitch control on the trading terminal — header chip on desktop, floating button on phones.
-              Channel is <span className="font-semibold text-fg-muted">{handle}</span>. On when you
-              connect Twitch; turn off here to hide it.
+              Twitch control on the trading terminal
             </>
           ) : (
             'Connect Twitch first — the terminal stream button appears as soon as it is linked.'

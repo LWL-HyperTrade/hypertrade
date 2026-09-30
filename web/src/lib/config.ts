@@ -109,6 +109,13 @@ export const TENANT_DEFAULT_FEE_TENTHS = 100;
 /** Matches backend MAX_CATALOG. v1 apps ship the full HyperTrade universe. */
 export const TENANT_MAX_CATALOG = 200;
 
+/**
+ * BuilderPad Residents (docs/RESIDENTS.md). `VITE_BUILDERPAD_RESIDENTS=1` shows the
+ * resident card on My Apps; the backend also needs `BUILDERPAD_RESIDENTS_ENABLED=1`.
+ * Public resident pages render regardless — a tenant with a resident is public data.
+ */
+export const BUILDERPAD_RESIDENTS_ENABLED = (ENV.VITE_BUILDERPAD_RESIDENTS ?? '').trim() === '1';
+
 /** Optional. Unset → viem public Arbitrum RPC. */
 export const ARBITRUM_RPC_URL = (ENV.VITE_ARBITRUM_RPC_URL ?? '').trim();
 

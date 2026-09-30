@@ -1,22 +1,25 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { stashLoginReturn, takeLoginReturn, useWebAuth } from '../lib/auth';
 import { PRIVY_APP_ID } from '../lib/config';
 import { useTenantBrand } from '../lib/useTenantBrand';
 import googleIcon from '../assets/images/google-icon-g.webp';
 import privyProtected from '../assets/images/privy-protected.webp';
+import { IconTikTok } from './icons';
 
 export function LoginPage() {
   const {
     authenticated,
     login,
     loginWithGoogle,
+    loginWithTikTok,
     googleBusy,
     loginError,
     ready,
     hydrating,
     privyConfigured,
   } = useWebAuth();
+  const [oauthKind, setOauthKind] = useState<'google' | 'tiktok' | null>(null);
   const navigate = useNavigate();
   const brand = useTenantBrand();
 
@@ -69,16 +72,33 @@ export function LoginPage() {
             type="button"
             disabled={!ready || googleBusy}
             onClick={() => {
+              setOauthKind('google');
               void loginWithGoogle().catch(() => undefined);
             }}
             className="btn-primary flex w-full items-center justify-center gap-2 py-3 text-sm"
           >
-            {googleBusy ? (
+            {googleBusy && oauthKind === 'google' ? (
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-black/20 border-t-black" />
             ) : (
               <img src={googleIcon} alt="" className="h-[18px] w-[18px] object-contain" />
             )}
             Continue with Google
+          </button>
+          <button
+            type="button"
+            disabled={!ready || googleBusy}
+            onClick={() => {
+              setOauthKind('tiktok');
+              void loginWithTikTok().catch(() => undefined);
+            }}
+            className="btn-ghost flex w-full items-center justify-center gap-2 py-3 text-sm"
+          >
+            {googleBusy && oauthKind === 'tiktok' ? (
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--text-3)]/30 border-t-[var(--text-1)]" />
+            ) : (
+              <IconTikTok size={18} />
+            )}
+            Continue with TikTok
           </button>
           {loginError ? (
             <p className="rounded-xl bg-[#2a1216] px-3 py-2 text-xs text-[var(--danger)]">{loginError}</p>

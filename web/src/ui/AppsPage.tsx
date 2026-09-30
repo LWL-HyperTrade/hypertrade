@@ -19,6 +19,7 @@ import { CreatorAppCard, CopyCa } from './CreatorAppCard';
 import { AppHref } from './AppHref';
 import { CustomDomainBadge } from './CustomDomainCard';
 import { StreamDeskCard } from './StreamDeskCard';
+import { ResidentCard } from './resident/ResidentCard';
 import { HlFeesCard } from './HlFeesCard';
 import { LaunchCoinLater } from './LaunchCoinLater';
 import { IconArrow, IconBolt, IconChart, IconCheck, IconCopy, IconCoin, IconRocket, IconWallet } from './icons';
@@ -427,7 +428,7 @@ export function AppsPage() {
                       <CreatorAppCard
                         tenant={row}
                         market={marketFor(coinMarkets.data, row.coin?.token)}
-                        appEarnedUsd={ownB ? appEarnedTotal : displayEarnedUsd(row)}
+                        appEarnedUsd={displayEarnedUsd(row)}
                         tokenEarnedUsd={earnedFor(earnedMap.data, row.coin?.token)}
                         to={isDraft ? '/create' : tenantAppHref(row.slug)}
                         layout="wide"
@@ -510,10 +511,11 @@ export function AppsPage() {
                           isDraft ? null : (
                             <>
                               <StreamDeskCard tenant={row} />
+                              <ResidentCard tenant={row} />
                               {ownB ? (
                                 <HlFeesCard
                                   builder={row.builder_address}
-                                  lifetimeUsd={appEarnedTotal}
+                                  appUsd={displayEarnedUsd(row)}
                                 />
                               ) : null}
                               {row.coin ? (

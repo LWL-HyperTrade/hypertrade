@@ -39,6 +39,7 @@ export type WebAuth = {
   builderAddress: `0x${string}` | null;
   login: () => void;
   loginWithGoogle: () => Promise<void>;
+  loginWithTikTok: () => Promise<void>;
   googleBusy: boolean;
   loginError: string | null;
   logout: () => Promise<void>;
@@ -58,6 +59,11 @@ export type WebAuth = {
   switchBuilderChain: (chainId: number, want?: string | null) => Promise<void>;
   /** Provider for the claimed builder. Do not run trading setup on this. */
   getBuilderEthereumProvider: (want?: string | null) => Promise<Eip1193Provider | null>;
+  /**
+   * Provider for the resident wallet (HD 2 — docs/RESIDENTS.md). Signs
+   * `approveAgent` / `approveBuilderFee` for resident AI agents. Never HD 0 / HD 1.
+   */
+  getResidentEthereumProvider: (address: string) => Promise<Eip1193Provider | null>;
   /** Trade wallet is a Privy embedded EOA. */
   isEmbedded: boolean;
   privyConfigured: boolean;
@@ -205,14 +211,6 @@ function cleanHandle(v: string | null | undefined): string {
   return (v ?? '').trim().replace(/^@/, '');
 }
 
-function youtubeFromGoogle(user: ReturnType<typeof usePrivy>['user']): string {
-  if (!user?.google) return '';
-  const name = cleanHandle(user.google.name);
-  if (name) return name;
-  const email = (user.google.email ?? '').trim();
-  return cleanHandle(email.split('@')[0]);
-}
-
 function twitchLoginFrom(row: { username?: string | null; name?: string | null; login?: string | null; preferred_username?: string | null }): string {
   for (const raw of [row.username, row.login, row.preferred_username, row.name]) {
     const h = cleanHandle(raw);
@@ -326,7 +324,7 @@ function privySocials(user: ReturnType<typeof usePrivy>['user']): VerifiedSocial
     discord: cleanHandle(user.discord?.username),
     tiktok: cleanHandle(user.tiktok?.username),
     instagram: cleanHandle(user.instagram?.username),
-    youtube: youtubeFromGoogle(user),
+    youtube: '',
     twitch: twitchFromLinked(user),
   };
 }
@@ -342,6 +340,7 @@ const GUEST: WebAuth = {
   builderAddress: null,
   login: () => undefined,
   loginWithGoogle: async () => undefined,
+  loginWithTikTok: async () => undefined,
   googleBusy: false,
   loginError: null,
   logout: async () => undefined,
@@ -354,6 +353,7 @@ const GUEST: WebAuth = {
     throw new Error('Sign in first');
   },
   getBuilderEthereumProvider: async () => null,
+  getResidentEthereumProvider: async () => null,
   isEmbedded: false,
   privyConfigured: false,
   socials: NO_SOCIALS,
@@ -376,6 +376,7 @@ function linkedAccountsOf(user: ReturnType<typeof usePrivy>['user']) {
     wallet_index?: number;
     walletClientType?: string;
     connectorType?: string;
+    imported?: boolean;
   }>;
 }
 
@@ -536,6 +537,11 @@ function PrivyAuthBridge({ children }: { children: ReactNode }) {
         stashLoginReturn();
         await initOAuth({ provider: 'google' });
       },
+      loginWithTikTok: async () => {
+        setLoginError(null);
+        stashLoginReturn();
+        await initOAuth({ provider: 'tiktok' });
+      },
       googleBusy,
       loginError,
       logout: () => privy.logout(),
@@ -575,6 +581,18 @@ function PrivyAuthBridge({ children }: { children: ReactNode }) {
         if (!target) return null;
         if (trade && target === trade.toLowerCase()) return null;
         const w = walletsRef.current.find((row) => row.address.toLowerCase() === target);
+        if (!w || typeof w.getEthereumProvider !== 'function') return null;
+        return (await w.getEthereumProvider()) as Eip1193Provider;
+      },
+      getResidentEthereumProvider: async (address: string) => {
+        const target = (address || '').toLowerCase();
+        if (!target) return null;
+        const trade = (addressRef.current || '').toLowerCase();
+        const builder = (builderAddressRef.current || '').toLowerCase();
+        if (target === trade || target === builder) return null;
+        const w = walletsRef.current.find(
+          (row) => row.address.toLowerCase() === target && row.walletClientType === 'privy',
+        );
         if (!w || typeof w.getEthereumProvider !== 'function') return null;
         return (await w.getEthereumProvider()) as Eip1193Provider;
       },
