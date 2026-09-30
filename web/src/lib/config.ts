@@ -7,24 +7,12 @@ export const PRIVY_APP_ID = (ENV.VITE_PRIVY_APP_ID ?? '').trim();
 const backend = (ENV.VITE_BACKEND_URL ?? '').trim().replace(/\/$/, '');
 export const API_BASE = backend ? `${backend}/api` : '/api';
 
-function hostnameFromOrigin(raw: string): string {
-  const v = (raw || '').trim();
-  if (!v) return '';
-  try {
-    const host = new URL(v.includes('://') ? v : `https://${v}`).hostname.toLowerCase();
-    return host.replace(/^www\./, '');
-  } catch {
-    return '';
-  }
-}
-
 /**
  * Apex console is `https://builderpad.xyz`. Live apps are `https://{slug}.builderpad.xyz`.
- * Optional `VITE_TENANT_BASE_DOMAIN` (or legacy `VITE_TENANT_PUBLIC_ORIGIN`) overrides.
+ * Optional `VITE_TENANT_BASE_DOMAIN` overrides the default `builderpad.xyz`.
  */
 export const TENANT_BASE_DOMAIN = (
   (ENV.VITE_TENANT_BASE_DOMAIN ?? '').trim().replace(/^https?:\/\//, '').split('/')[0].replace(/^\./, '')
-  || hostnameFromOrigin(ENV.VITE_TENANT_PUBLIC_ORIGIN ?? '')
   || 'builderpad.xyz'
 ).toLowerCase();
 

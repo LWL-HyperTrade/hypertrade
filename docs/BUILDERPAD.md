@@ -27,7 +27,7 @@ Do not reopen these without a product reason. They exist because of HL constrain
 | **$5 Activate fee**, once per builder | Separate from the 100. Gasless USDC permit to `BUILDERPAD_ACTIVATION_TREASURY` (default `BUILDER_ADDRESS`). Skip Activate = still free preview |
 | Order `b` is `tenants.builder_address` from the **server** | Never a client paste. Web desk only. HyperTrade Expo always pins HyperTrade and does not run BuilderPad |
 | Attribute as **`(wallet, cloid)` or `(wallet, oid)`**. Never cloid alone | Prefix `0x4250` (`BP`) + sha256(tenant id)[0:8] + random. Must not collide with AI `0x48544149` (`HTAI`). Official cash is HL `userFills.builderFee` on **`(wallet, oid)`** |
-| Same Privy App ID as HyperTrade (shared infra). Do **not** set the Expo Client ID on web | Separate **product**. Web may use a Privy **Web** client in `VITE_PRIVY_CLIENT_ID` |
+| Same Privy App ID as HyperTrade (shared infra). Do **not** set an Expo client ID on web | The web app does not read `VITE_PRIVY_CLIENT_ID` |
 | **BuilderPad is web only** | Vite `web/` at builderpad.xyz. Not in the HyperTrade Expo binary — no console, no tenant skin, no HD 1 on the phone |
 | **One wizard, one go** | Create is three chapters in one session: **App → Activate → Coin**. Identity is filled once. The creator should feel they are about to earn from **perps builder fees and the token** together |
 | **Activate is skippable, not hidden** | 100 USDC + Standard + Activate stays in the flow. Skip = app still publishes on HyperTrade `b` (preview). Copy must show they are leaving that 1B-preview take on the table |
@@ -200,13 +200,13 @@ web/          Vite + @privy-io/react-auth (same PRIVY_APP_ID as mobile)
 ```
 
 ```bash
-cp web/.env.example web/.env   # VITE_PRIVY_APP_ID + VITE_BACKEND_URL (+ optional Web client ID)
+cp web/.env.example web/.env   # VITE_PRIVY_APP_ID + VITE_BACKEND_URL
 cd web && npm install && npm run dev   # http://localhost:5173
 ```
 
 Vite proxies `/api` to `VITE_PROXY_TARGET` or `127.0.0.1:8000`. That process must be **this** HyperTrade backend, not OrbCast.
 
-Privy dashboard: add `http://localhost:5173` (and the deploy host) to **allowed origins**, plus `/login` as the OAuth redirect. Same App ID as HyperTrade. If you create a Privy **Web** client, put that ID in `VITE_PRIVY_CLIENT_ID` — never the Expo/mobile client.
+Privy dashboard: add `http://localhost:5173` (and the deploy host) to **allowed origins**, plus `/login` as the OAuth redirect. Same App ID as HyperTrade. Do not set the Expo client ID on the web deploy.
 
 Desk agent name is **`HyperTrade Web`** so it does not replace the mobile agent `HyperTrade` (HL nonces-and-api-wallets). Click the signed-in email for the **trade** wallet + trade Bridge2. Fund the builder from Activate / My apps only. Existing builders: login with that MetaMask — we mint HD 0 for the desk and skip HD 1.
 

@@ -176,15 +176,13 @@ Injected at build time (`EXPO_PUBLIC_*`). Prefer `.env` / EAS secrets over commi
 | `EXPO_PUBLIC_WHITEPAPER_URL` | Profile whitepaper link. Production: `https://www.hypertrade.exchange/LWL_Whitepaper.pdf` (app fallback matches this if unset) |
 | `EXPO_PUBLIC_TENANT_BASE_DOMAIN` | Optional. Same hostname as `BUILDERPAD_PUBLIC_DOMAIN` (default `builderpad.xyz`). Used in share links `https://{slug}.{domain}` |
 | `EXPO_PUBLIC_TENANT_PUBLIC_ORIGIN` | Legacy. If set, only the hostname is used (same as base domain) |
-| `VITE_PRIVY_APP_ID` | BuilderPad Vite console (`web/`) — same App ID as mobile |
-| `VITE_PRIVY_CLIENT_ID` | Optional. Privy **Web** app client (not the Expo/mobile client). Same idea as OrbCast |
-| `VITE_BACKEND_URL` | BuilderPad Vite console API origin. Empty in `npm run dev` uses `/api` proxy |
-| `VITE_TENANT_BASE_DOMAIN` | Optional. Same default `builderpad.xyz`. Console origin is `https://{this}`; apps are `{slug}.{this}` |
-| `VITE_TENANT_PUBLIC_ORIGIN` | Legacy. If set, hostname is used as the base domain |
-| `VITE_ARBITRUM_RPC_URL` | Optional. Same role as `EXPO_PUBLIC_ARBITRUM_RPC_URL` for the Vite wallet sheet (Arbitrum USDC reads). Unset → viem public RPC |
-| `VITE_WALLETCONNECT_PROJECT_ID` | Optional. Your WalletConnect (Reown) Cloud project ID for Privy's `wallet_connect_qr` login entry on the web console → `config.walletConnectCloudProjectId`. Unset → Privy's shared project (rate-limited, our domains show as unverified in wallets). Alternative: set it in the Privy Dashboard instead. Allowlist `builderpad.xyz`, `www.builderpad.xyz`, `*.builderpad.xyz` on the Reown project. Not a backend var; unrelated to `EXPO_PUBLIC_WALLETCONNECT_PROJECT_ID` (Expo Reown AppKit) though the same project can be reused |
-| `VITE_BUILDERPAD_RESIDENTS` | Optional. `1` shows the **AI resident** card on My Apps (docs/RESIDENTS.md). Backend must also set `BUILDERPAD_RESIDENTS_ENABLED=1`. Avatars: drop `.vrm` / `.vrma` files under `web/public/resident/` (README there) |
-| `VITE_ROBINHOOD_RPC_URL` | **`web/.env` only** (Vite prefix). Optional. Robinhood Chain (4663) RPC for Pons reads, `simulateContract`, and Privy embedded-wallet sends (`addRpcUrlOverrideToChain`). Unset → public / Privy default RPC. Must be a **Robinhood** endpoint (Alchemy `robinhood-mainnet`), not Arbitrum. Restart Vite after changing it. This is **not** the Foundry `ROBINHOOD_RPC_URL` |
+| `VITE_PRIVY_APP_ID` | Required. Same Privy App ID as mobile and the API. Do not set the Expo client ID on web |
+| `VITE_BACKEND_URL` | Required on Vercel. FastAPI origin, no `/api` suffix. Empty in `npm run dev` uses the Vite `/api` proxy |
+| `VITE_TENANT_BASE_DOMAIN` | Optional. Default `builderpad.xyz`. Console is `https://{this}`; apps are `{slug}.{this}` |
+| `VITE_BUILDERPAD_RESIDENTS` | Optional. `1` shows the AI resident card on My Apps. The API needs `BUILDERPAD_RESIDENTS_ENABLED=1` (Railway, not Vercel) |
+| `VITE_ARBITRUM_RPC_URL` | Optional. Arbitrum USDC reads in the wallet sheet. Unset → public RPC |
+| `VITE_ROBINHOOD_RPC_URL` | Optional. Robinhood Chain (4663) RPC for token reads and sends. Not Arbitrum, and not the Foundry `ROBINHOOD_RPC_URL` |
+| `VITE_WALLETCONNECT_PROJECT_ID` | Optional. WalletConnect Cloud project ID for the wallet-connect login entry. Unset → Privy's shared project |
 
 ### Pons Foundry (`contracts/pons-v2/`) — separate from web/backend
 
