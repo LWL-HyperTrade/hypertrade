@@ -13,6 +13,8 @@
  * Preview apps store the platform builder in `tenants.builder_address`.
  * An own builder without ≥100 USDC perp (or on a unified account) cannot be
  * approved, so those residents credit the house builder instead.
+ * A funded builder the resident wallet has never approved is the same: the
+ * trader did not opt into that builder, so orders credit the house builder.
  */
 import type { Hex } from 'viem';
 import { config, isTestnet } from '../config.js';
@@ -68,6 +70,18 @@ async function builderCanCollect(addr: string): Promise<boolean> {
   return equity + 1e-9 >= BUILDER_MIN_PERP_USD;
 }
 
+/** True when `user` has already approved `builder` for at least `need` tenths. */
+async function userApprovedBuilder(user: string, builder: string, need: number): Promise<boolean> {
+  const url = isTestnet() ? 'https://api.hyperliquid-testnet.xyz/info' : 'https://api.hyperliquid.xyz/info';
+  const raw = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ type: 'maxBuilderFee', user, builder }),
+  }).then((r) => r.json());
+  const approved = Number(raw);
+  return Number.isFinite(approved) && approved > 0 && approved + 1e-9 >= need;
+}
+
 /**
  * Refresh the agent → live tenant map. Missing table (migration not applied)
  * or a transient read error leaves the previous map in place and logs once.
@@ -85,6 +99,16 @@ export async function refreshResidentTenants(): Promise<number> {
     return 0;
   }
   const tenantIds = [...new Set(rows.map((r) => r.tenant_id))];
+  const agentIds = [...new Set(rows.map((r) => r.agent_id))];
+  const masters = await supabase.from('ai_agents').select('id, hl_master_address').in('id', agentIds);
+  const masterByAgent = new Map<string, string>();
+  if (!masters.error) {
+    for (const row of (masters.data ?? []) as Array<{ id?: string; hl_master_address?: string }>) {
+      const id = String(row.id ?? '').toLowerCase();
+      const wallet = String(row.hl_master_address ?? '').trim().toLowerCase();
+      if (id && isAddress(wallet)) masterByAgent.set(id, wallet);
+    }
+  }
   const tenants = await supabase
     .from('tenants')
     .select('id, slug, status, builder_address, builder_fee_tenths')
@@ -101,23 +125,32 @@ export async function refreshResidentTenants(): Promise<number> {
     if (!id || !isAddress(addr)) continue;
     const feeRaw = Number(t.builder_fee_tenths);
     const f = Number.isFinite(feeRaw) && feeRaw >= 0 ? Math.floor(feeRaw) : HOUSE_BUILDER.f;
-    let b = addr.toLowerCase() as Hex;
-    try {
-      if (!(await builderCanCollect(b))) b = HOUSE_BUILDER.b;
-    } catch (err) {
-      console.warn(`[residents] builder check failed for ${String(t.slug ?? id)}: ${err}`);
-      b = HOUSE_BUILDER.b;
-    }
     liveById.set(id, {
       tenantId: id,
       slug: String(t.slug ?? ''),
-      builder: { b, f },
+      builder: { b: addr.toLowerCase() as Hex, f },
     });
   }
   const next = new Map<string, ResidentTenant>();
   for (const r of rows) {
     const t = liveById.get(r.tenant_id);
-    if (t) next.set(String(r.agent_id).toLowerCase(), t);
+    if (!t) continue;
+    let b = t.builder.b;
+    const wallet = masterByAgent.get(String(r.agent_id).toLowerCase()) ?? '';
+    try {
+      if (!(await builderCanCollect(b))) b = HOUSE_BUILDER.b;
+      else if (wallet && b.toLowerCase() !== HOUSE_BUILDER.b.toLowerCase()) {
+        const approved = await userApprovedBuilder(wallet, b, t.builder.f);
+        if (!approved) b = HOUSE_BUILDER.b;
+      }
+    } catch (err) {
+      console.warn(`[residents] builder check failed for ${t.slug}: ${err}`);
+      b = HOUSE_BUILDER.b;
+    }
+    next.set(String(r.agent_id).toLowerCase(), {
+      ...t,
+      builder: { b, f: t.builder.f },
+    });
   }
   byAgent = next;
   return next.size;

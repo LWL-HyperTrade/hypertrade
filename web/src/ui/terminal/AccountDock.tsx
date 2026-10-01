@@ -55,6 +55,14 @@ type Props = {
   assets: AssetRow[];
   clearing: Clearinghouse | null;
   orders: OpenOrder[];
+  /**
+   * Live Positions, orders, and history. Defaults to `address` / `clearing`.
+   * When the desk is on the resident wallet, pass the main wallet here so
+   * those tabs do not repeat the resident book.
+   */
+  bookAddress?: string | null;
+  bookClearing?: Clearinghouse | null;
+  bookOrders?: OpenOrder[];
   /** Prefer live mark for the active terminal market. */
   liveMarkCoin?: string | null;
   liveMarkPx?: number | null;
@@ -112,6 +120,9 @@ export function AccountDock({
   assets,
   clearing,
   orders,
+  bookAddress,
+  bookClearing,
+  bookOrders,
   liveMarkCoin,
   liveMarkPx,
   selectedCoin = null,
@@ -151,8 +162,11 @@ export function AccountDock({
   const [confirmOid, setConfirmOid] = useState<number | null>(null);
   const [confirmCloseAll, setConfirmCloseAll] = useState(false);
   const [confirmCancelAll, setConfirmCancelAll] = useState(false);
-  const positions = (clearing?.positions ?? []).filter((p) => catalogAllows(catalog, p.coin, assets));
-  const open = orders.filter((o) => catalogAllows(catalog, o.coin, assets));
+  const deskAddress = bookAddress ?? address;
+  const deskClearing = bookClearing ?? clearing;
+  const deskOrders = bookOrders ?? orders;
+  const positions = (deskClearing?.positions ?? []).filter((p) => catalogAllows(catalog, p.coin, assets));
+  const open = deskOrders.filter((o) => catalogAllows(catalog, o.coin, assets));
 
   useEffect(() => {
     if (!builderAddress && tab === 'builder') setTab('positions');
@@ -196,18 +210,18 @@ export function AccountDock({
   }, [assets, liveMidsQ.data, liveMarkCoin, liveMarkPx]);
 
   const fillsQ = useQuery({
-    queryKey: ['hl', 'userFills', address],
+    queryKey: ['hl', 'userFills', deskAddress],
     // Prefetch whenever we have an address so Live Positions Time updates
     // without waiting for a tab switch / full page refresh.
-    enabled: !!address,
-    queryFn: () => fetchUserFills(address!),
+    enabled: !!deskAddress,
+    queryFn: () => fetchUserFills(deskAddress!),
     staleTime: 8_000,
     refetchInterval: positions.length > 0 ? 12_000 : false,
   });
   const histQ = useQuery({
-    queryKey: ['hl', 'historicalOrders', address],
-    enabled: !!address && tab === 'history',
-    queryFn: () => fetchHistoricalOrders(address!),
+    queryKey: ['hl', 'historicalOrders', deskAddress],
+    enabled: !!deskAddress && tab === 'history',
+    queryFn: () => fetchHistoricalOrders(deskAddress!),
     staleTime: 15_000,
   });
 
@@ -241,7 +255,7 @@ export function AccountDock({
   });
   const residentName = residentQ.data?.agents?.[0]?.name?.trim() || 'AI Resident';
   const residentPosN = (residentQ.data?.agents ?? []).reduce(
-    (n, a) => n + (a.positions ?? []).filter((p) => p.manual !== true).length,
+    (n, a) => n + (a.positions ?? []).length,
     0,
   );
   const tabs: { id: Tab; label: string }[] = [
@@ -255,7 +269,12 @@ export function AccountDock({
       ? [{ id: 'builder' as const, label: builderN ? `My Builder Wallet (${builderN})` : 'My Builder Wallet' }]
       : []),
   ];
-  const headerClearing = tab === 'builder' ? builderClearing : clearing;
+  const headerClearing =
+    tab === 'builder'
+      ? builderClearing
+      : tab === 'balances' || tab === 'resident'
+        ? clearing
+        : deskClearing;
 
   return (
     <div className="flex h-full min-h-0 flex-col border-t border-stroke-weak bg-background">
@@ -416,6 +435,7 @@ export function AccountDock({
             feeTenths={residentFeeTenths}
             builderAddress={residentBuilderAddress}
             cloidPrefix={residentCloidPrefix}
+            confirmClose={confirmClose}
           />
         ) : tab === 'builder' && builderAddress ? (
           <>

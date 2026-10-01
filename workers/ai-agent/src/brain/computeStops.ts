@@ -144,9 +144,10 @@ export function computeSessionStats(bars: FuturesBar[]) {
   if (highs.length === 0 || lows.length === 0) {
     const allHighs = bars.map(b => b.high_price ?? NaN).filter(Number.isFinite) as number[];
     const allLows = bars.map(b => b.low_price ?? NaN).filter(Number.isFinite) as number[];
-    const sessionHigh = Math.max(...allHighs);
-    const sessionLow = Math.min(...allLows);
-    const sessionRange = sessionHigh - sessionLow;
+    const sessionHigh = allHighs.length ? Math.max(...allHighs) : NaN;
+    const sessionLow = allLows.length ? Math.min(...allLows) : NaN;
+    const sessionRange =
+      Number.isFinite(sessionHigh) && Number.isFinite(sessionLow) ? sessionHigh - sessionLow : NaN;
 
     const dv = bars.reduce((s, b) => s + (b.dollar_volume ?? 0), 0);
     const cv = bars.reduce((s, b) => s + (b.coin_volume ?? 0), 0);
@@ -264,8 +265,15 @@ export function planStops(
   }
 
   // Dynamic base range: prefer sessionRange; if too tiny, blend with median bar range.
-  const baseRange = Math.max(sessionRange, 1.5 * (Number.isFinite(medBarRange) ? medBarRange : 0));
-  if (sessionRange < (medBarRange || 0)) notes.push('fallback: sessionRange < median bar range');
+  const hasSession =
+    Number.isFinite(sessionHigh) &&
+    Number.isFinite(sessionLow) &&
+    Number.isFinite(sessionRange) &&
+    sessionRange > 0;
+  const baseRange = hasSession
+    ? Math.max(sessionRange, 1.5 * (Number.isFinite(medBarRange) ? medBarRange : 0))
+    : 0;
+  if (hasSession && sessionRange < (medBarRange || 0)) notes.push('fallback: sessionRange < median bar range');
 
   const m = hint === 'tight' ? geo.hintTight : hint === 'loose' ? geo.hintLoose : geo.hintMedium;
   let R = m * baseRange;
@@ -278,9 +286,9 @@ export function planStops(
   // First hour stop guard (00:05 UTC) - session range is tiny
   const isFirstHourUTC = new Date().getUTCHours() === 0;
   const minRFromBars = (isFirstHourUTC ? 0.30 : 0.20) * (medBarRange || 0);
-  const maxRFromSession = 0.80 * Math.max(baseRange, sessionRange);
   const preferredR = entryPrice * geo.preferredStopPct;
   const maxRFromPct = entryPrice * geo.maxStopPct;
+  const maxRFromSession = hasSession ? 0.80 * Math.max(baseRange, sessionRange) : maxRFromPct;
 
   // Soft floor at preferred %, then session/bar clamps, then hard max %.
   R = Math.max(R, preferredR);
@@ -310,20 +318,20 @@ export function planStops(
   const maxDistShort = entryPrice + maxRFromPct;
 
   // enforce session bounds, then hard max distance
-  const boundLong = Math.max(rawStop, sessionLow);
-  const boundShort = Math.min(rawStop, sessionHigh);
+  const boundLong = hasSession ? Math.max(rawStop, sessionLow) : rawStop;
+  const boundShort = hasSession ? Math.min(rawStop, sessionHigh) : rawStop;
 
   let finalStop: number;
   if (side === 'long') {
     // stop below entry, not below session low, not wider than maxStopPct
     finalStop = Math.max(boundLong, maxDistLong);
     finalStop = Math.min(finalStop, entryPrice - 1e-6);
-    if (finalStop <= sessionLow) finalStop = boundLong;
+    if (hasSession && finalStop <= sessionLow) finalStop = boundLong;
   } else {
-    finalStop = Math.min(boundShort, sessionHigh);
+    finalStop = hasSession ? Math.min(boundShort, sessionHigh) : boundShort;
     finalStop = Math.min(finalStop, maxDistShort);
     finalStop = Math.max(finalStop, entryPrice + 1e-6);
-    if (finalStop > sessionHigh) finalStop = sessionHigh - 1e-6;
+    if (hasSession && finalStop > sessionHigh) finalStop = sessionHigh - 1e-6;
   }
 
   // CRITICAL SAFETY CHECK: Ensure stop never exceeds liquidation price

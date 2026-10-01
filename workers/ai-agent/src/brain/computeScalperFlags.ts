@@ -364,7 +364,7 @@ export function computeScalperFlags(
     ? percentileRank(rangePctSeries, realizedRangePctRaw)
     : NaN
   let volatilityState: ScalperFlags['volatilityState'] = 'normal'
-  if (Number.isFinite(rangePercentile)) {
+  if (Number.isFinite(rangePercentile) && rangePctSeries.length >= 12) {
     if (rangePercentile <= 35) {
       volatilityState = 'low'
     } else if (rangePercentile >= 70) {

@@ -38,7 +38,7 @@ import { fetchClearinghouse, formatUsd } from '../../lib/hlMarket';
 import { isWalletUserRejectedRequest, sendPerpUsdc, type Hex } from '../../lib/hlTrade';
 import {
   approveResidentAgent,
-  resolveResidentBuilder,
+  resolveApprovedResidentBuilder,
   revokeResidentAgent,
   ensureResidentBuilderApproved,
   ensureResidentUnified,
@@ -126,11 +126,18 @@ async function activateResidentAgent(args: {
   resident: Hex;
   tenant: TenantPublic;
   provider: ResidentProvider;
+  /** This login's builder wallet. Unapproved → credit BuilderPad, don't block go-live. */
+  ownBuilder?: string | null;
   onStep?: (label: string) => void;
 }): Promise<void> {
-  const { agent, token, resident, tenant, provider, onStep } = args;
+  const { agent, token, resident, tenant, provider, ownBuilder, onStep } = args;
   onStep?.('Approving builder fee');
-  const builder = await resolveResidentBuilder(tenant.builder_address);
+  const builder = await resolveApprovedResidentBuilder({
+    tenantBuilder: tenant.builder_address,
+    user: resident,
+    requiredFeeTenths: tenant.builder_fee_tenths,
+    ownBuilder,
+  });
   await ensureResidentBuilderApproved({
     provider,
     residentAddress: resident,
@@ -179,7 +186,7 @@ export function ResidentCard({ tenant }: { tenant: TenantPublic }) {
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState('');
   const [renameSaving, setRenameSaving] = useState(false);
-  const { getAccessToken, getResidentEthereumProvider } = useWebAuth();
+  const { getAccessToken, getResidentEthereumProvider, builderAddress } = useWebAuth();
   const qc = useQueryClient();
   const pairQ = useEnsureBuilderWallets();
   const wallet = useResidentWallet(enabled ? pairQ.data ?? null : null);
@@ -257,6 +264,7 @@ export function ResidentCard({ tenant }: { tenant: TenantPublic }) {
         resident,
         tenant,
         provider,
+        ownBuilder: builderAddress,
       });
       void qc.invalidateQueries({ queryKey: ['my-tenants'] });
       void qc.invalidateQueries({ queryKey: ['ai-agents', 'mine'] });
@@ -608,7 +616,7 @@ export function ResidentCard({ tenant }: { tenant: TenantPublic }) {
 type Step = 'wallet' | 'fund' | 'agent' | 'character';
 
 function ResidentDialog({ tenant, onClose }: { tenant: TenantPublic; onClose: () => void }) {
-  const { getAccessToken, getResidentEthereumProvider } = useWebAuth();
+  const { getAccessToken, getResidentEthereumProvider, builderAddress } = useWebAuth();
   const qc = useQueryClient();
   const pairQ = useEnsureBuilderWallets();
   const pair: BuilderWallets | null = pairQ.data ?? null;
@@ -747,6 +755,7 @@ function ResidentDialog({ tenant, onClose }: { tenant: TenantPublic; onClose: ()
           onChanged={invalidate}
           getToken={getAccessToken}
           getResidentProvider={() => (resident ? getResidentEthereumProvider(resident) : Promise.resolve(null))}
+          ownBuilder={builderAddress}
           onCharacter={() => goTo('character')}
         />
       ) : null}
@@ -1241,6 +1250,7 @@ function AgentStep({
   onChanged,
   getToken,
   getResidentProvider,
+  ownBuilder,
   onCharacter,
 }: {
   tenant: TenantPublic;
@@ -1253,6 +1263,7 @@ function AgentStep({
   onChanged: () => void;
   getToken: () => Promise<string | null>;
   getResidentProvider: () => Promise<Awaited<ReturnType<ReturnType<typeof useWebAuth>['getResidentEthereumProvider']>>>;
+  ownBuilder?: string | null;
   onCharacter: () => void;
 }) {
   const [form, setForm] = useState<ResidentAgentForm>(EMPTY_AGENT_FORM);
@@ -1287,6 +1298,7 @@ function AgentStep({
       resident,
       tenant,
       provider,
+      ownBuilder,
       onStep: setStepLabel,
     });
   };

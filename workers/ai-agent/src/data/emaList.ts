@@ -226,7 +226,7 @@ export function renderEmaSection(
     if (opts?.hip3) {
       return `
 
-**TREND EMAs**: Unavailable for this symbol on CoinGlass — judge on flow/OI/macro/session alone; do **not** invent EMA levels.`;
+**TREND EMAs**: No intraday 4h/1d/1w stack for this contract. Use DAILY STRUCTURE when it is present. Do not invent EMA levels, and do not fall back to venue flow or open interest.`;
     }
     return '';
   }

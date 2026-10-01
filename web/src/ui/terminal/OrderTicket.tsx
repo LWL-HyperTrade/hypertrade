@@ -15,7 +15,7 @@ import { formatPx, formatSz, formatUsd, type Clearinghouse } from '../../lib/hlM
 import {
   ensureTradingReady,
   getAssetIdAndMeta,
-  resolveResidentBuilder,
+  resolveApprovedResidentBuilder,
   invalidateTradingReady,
   isWalletUserRejectedRequest,
   placeDeskOrder,
@@ -728,9 +728,12 @@ export function OrderTicket({
       const provider = getTradeProvider ? await getTradeProvider() : await getEthereumProvider();
       if (!provider || !activeAddress) throw new Error('Wallet is not ready. Sign in again.');
       const userAddress = activeAddress;
-      const feeBuilder = tradeAddress
-        ? await resolveResidentBuilder(tenant.builder_address)
-        : tenant.builder_address;
+      const feeBuilder = await resolveApprovedResidentBuilder({
+        tenantBuilder: tenant.builder_address,
+        user: userAddress,
+        requiredFeeTenths: tenant.builder_fee_tenths,
+        ownBuilder: builderAddress,
+      });
       const ready = await ensureTradingReady({
         provider,
         userAddress,

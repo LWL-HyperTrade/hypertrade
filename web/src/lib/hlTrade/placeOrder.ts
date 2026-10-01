@@ -423,15 +423,17 @@ export async function placeDeskOrder(input: PlaceDeskOrderInput): Promise<PlaceD
  * trips of placing them one after the other, and HL treats them as one
  * TP/SL pair. Prefer this over two `placeReduceOnlyTpslTrigger` calls.
  */
-export async function placePositionTpsl(args: {
-  agentPrivateKey: Hex;
-  symbol: string;
-  entrySide: 'long' | 'short';
-  tpTriggerPx?: number | null;
-  slTriggerPx?: number | null;
-  feeTenths: number;
-  builderAddress?: string | null;
-}): Promise<unknown> {
+async function submitPositionTpsl(
+  exchange: Pick<ExchangeClient, 'order'>,
+  args: {
+    symbol: string;
+    entrySide: 'long' | 'short';
+    tpTriggerPx?: number | null;
+    slTriggerPx?: number | null;
+    feeTenths: number;
+    builderAddress?: string | null;
+  },
+): Promise<unknown> {
   const legs: Array<{ tpsl: 'tp' | 'sl'; px: number }> = [];
   if (args.tpTriggerPx != null && Number.isFinite(args.tpTriggerPx) && args.tpTriggerPx > 0) {
     legs.push({ tpsl: 'tp', px: args.tpTriggerPx });
@@ -442,7 +444,6 @@ export async function placePositionTpsl(args: {
   if (!legs.length) throw new Error('Set a take profit or a stop loss');
   const { assetId, szDecimals } = await getAssetIdAndMeta(args.symbol);
   const isBuy = args.entrySide === 'short';
-  const exchange = createAgentExchangeClient(args.agentPrivateKey);
   const feeTenths = clampTenantFeeTenths(args.feeTenths);
   const result = await exchange.order({
     orders: legs.map((leg) => {
@@ -462,6 +463,34 @@ export async function placePositionTpsl(args: {
   const acceptErr = getPerpOrderAcceptanceError(result);
   if (acceptErr) throw new Error(acceptErr);
   return result;
+}
+
+export async function placePositionTpsl(args: {
+  agentPrivateKey: Hex;
+  symbol: string;
+  entrySide: 'long' | 'short';
+  tpTriggerPx?: number | null;
+  slTriggerPx?: number | null;
+  feeTenths: number;
+  builderAddress?: string | null;
+}): Promise<unknown> {
+  return submitPositionTpsl(createAgentExchangeClient(args.agentPrivateKey), args);
+}
+
+/** Same TP/SL pair, signed by the resident wallet instead of the desk agent. */
+export async function placeUserPositionTpsl(args: {
+  provider: Eip1193Provider;
+  userAddress: Hex;
+  symbol: string;
+  entrySide: 'long' | 'short';
+  tpTriggerPx?: number | null;
+  slTriggerPx?: number | null;
+  feeTenths: number;
+  builderAddress?: string | null;
+}): Promise<unknown> {
+  return withUserSignedExchange(args.provider, args.userAddress, (exchange) =>
+    submitPositionTpsl(exchange, args),
+  );
 }
 
 /**

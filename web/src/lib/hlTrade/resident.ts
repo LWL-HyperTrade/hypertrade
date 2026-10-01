@@ -81,6 +81,38 @@ export async function resolveResidentBuilder(tenantBuilder?: string | null): Pro
 }
 
 /**
+ * Builder to put on a desk or resident order.
+ * The app builder is used only when this wallet has already approved it.
+ * A trader who merely holds 100 USDC on their own builder wallet has not
+ * opted into being a builder — those orders credit BuilderPad instead of
+ * asking them to approve that wallet.
+ * Someone else's app builder is still returned so the caller can approve it
+ * once; that is the normal builder-code signature, not a builder setup.
+ */
+export async function resolveApprovedResidentBuilder(args: {
+  tenantBuilder?: string | null;
+  user: Hex;
+  requiredFeeTenths: number;
+  /** Logged-in user's builder wallet (HD 1), when this session has one. */
+  ownBuilder?: string | null;
+}): Promise<Hex> {
+  const need = Math.max(0, Math.floor(args.requiredFeeTenths) || 0);
+  const preferred = await resolveResidentBuilder(args.tenantBuilder);
+  const enough = async (builder: Hex) => {
+    try {
+      const approved = await getApprovedBuilderFeeTenths(args.user, builder);
+      return approved > 0 && approved >= need;
+    } catch {
+      return false;
+    }
+  };
+  if (await enough(preferred)) return preferred;
+  const mine = (args.ownBuilder || '').trim().toLowerCase();
+  if (mine && preferred.toLowerCase() === mine) return HL_BUILDER_ADDRESS;
+  return preferred;
+}
+
+/**
  * Approve the app's builder at HL's 0.1% max once, so later fee edits
  * (0–10 bps, append-only) never need a second signature. Returns true when a
  * signature was sent.

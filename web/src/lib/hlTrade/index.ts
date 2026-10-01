@@ -25,7 +25,7 @@ export {
 } from './spot';
 export type { SpotAssetData } from './spot';
 export { getHlInfoClient, withUserSignedExchange } from './clients';
-export { resolveResidentBuilder } from './resident';
+export { resolveApprovedResidentBuilder, resolveResidentBuilder } from './resident';
 export { fetchHlRewards, claimHlRewards, HL_CLAIM_MIN_USD } from './claimRewards';
 export type { HlRewards } from './claimRewards';
 export {

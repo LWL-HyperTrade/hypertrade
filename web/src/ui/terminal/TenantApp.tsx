@@ -7,7 +7,7 @@ import {
   cancelDeskOrder,
   cancelDeskOrders,
   ensureTradingReady,
-  resolveResidentBuilder,
+  resolveApprovedResidentBuilder,
   getAssetIdAndMeta,
   getSpotAssetData,
   invalidateTradingReady,
@@ -226,16 +226,17 @@ export function TenantApp({ slug, coin }: Props) {
     'Resident';
   const tradeAddress = book === 'resident' && canUseResidentBook ? residentWallet : address;
   const account = useHlAccount(tradeAddress);
+  const masterAccount = useHlAccount(address || null);
 
   // Keep close/cancel rows dimmed until HL account data drops them — clearing
   // busy in `finally` flashed the row back to full opacity before refetch.
   useEffect(() => {
     if (!closingCoin) return;
-    const stillOpen = account.clearing?.positions.some(
+    const stillOpen = masterAccount.clearing?.positions.some(
       (p) => p.coin.toUpperCase() === closingCoin.toUpperCase(),
     );
     if (!stillOpen) setClosingCoin(null);
-  }, [account.clearing?.positions, closingCoin]);
+  }, [masterAccount.clearing?.positions, closingCoin]);
 
   useEffect(() => {
     if (!closingAll) return;
@@ -244,17 +245,17 @@ export function TenantApp({ slug, coin }: Props) {
       setClosingAll(false);
       return;
     }
-    const stillOpen = account.clearing?.positions.some((p) =>
+    const stillOpen = masterAccount.clearing?.positions.some((p) =>
       wanted.some((c) => c.toUpperCase() === p.coin.toUpperCase()),
     );
     if (!stillOpen) setClosingAll(false);
-  }, [account.clearing?.positions, closingAll]);
+  }, [masterAccount.clearing?.positions, closingAll]);
 
   useEffect(() => {
     if (cancellingOid == null) return;
-    const stillOpen = account.orders.some((o) => o.oid === cancellingOid);
+    const stillOpen = masterAccount.orders.some((o) => o.oid === cancellingOid);
     if (!stillOpen) setCancellingOid(null);
-  }, [account.orders, cancellingOid]);
+  }, [masterAccount.orders, cancellingOid]);
 
   useEffect(() => {
     if (!cancellingAll) return;
@@ -263,9 +264,9 @@ export function TenantApp({ slug, coin }: Props) {
       setCancellingAll(false);
       return;
     }
-    const stillOpen = account.orders.some((o) => wanted.includes(o.oid));
+    const stillOpen = masterAccount.orders.some((o) => wanted.includes(o.oid));
     if (!stillOpen) setCancellingAll(false);
-  }, [account.orders, cancellingAll]);
+  }, [masterAccount.orders, cancellingAll]);
 
   useEffect(() => {
     if (!closingCoin) return;
@@ -447,7 +448,9 @@ export function TenantApp({ slug, coin }: Props) {
   }
 
   const isOwner = authenticated && !!tenant.privy_user_id;
-  const signingAddress = (tradeAddress || address || '') as Hex;
+  // Live Positions / orders always belong to the main wallet. The resident
+  // book is the AI Resident tab, even while the desk is trading that wallet.
+  const signingAddress = (address || '') as Hex;
 
   const prepareTrade = async () => {
     if (!signingAddress || !tenant || tenant.status !== 'live') {
@@ -456,15 +459,14 @@ export function TenantApp({ slug, coin }: Props) {
     if (builderAddress && signingAddress.toLowerCase() === builderAddress.toLowerCase()) {
       throw new Error('Trade wallet required — builder wallet cannot place orders.');
     }
-    const provider =
-      book === 'resident' && canUseResidentBook
-        ? await getResidentEthereumProvider(residentWallet)
-        : await getEthereumProvider();
+    const provider = await getEthereumProvider();
     if (!provider) throw new Error('Wallet is not ready. Sign in again.');
-    const feeBuilder =
-      book === 'resident' && canUseResidentBook
-        ? await resolveResidentBuilder(tenant.builder_address)
-        : tenant.builder_address;
+    const feeBuilder = await resolveApprovedResidentBuilder({
+      tenantBuilder: tenant.builder_address,
+      user: signingAddress,
+      requiredFeeTenths: tenant.builder_fee_tenths,
+      ownBuilder: builderAddress,
+    });
     const ready = await ensureTradingReady({
       provider,
       userAddress: signingAddress,
@@ -1301,6 +1303,9 @@ export function TenantApp({ slug, coin }: Props) {
             assets={catalogQ.data ?? []}
             clearing={account.clearing}
             orders={account.orders}
+            bookAddress={address}
+            bookClearing={masterAccount.clearing}
+            bookOrders={masterAccount.orders}
             liveMarkCoin={selected?.coin ?? null}
             liveMarkPx={mark}
             selectedCoin={selected?.coin ?? null}
