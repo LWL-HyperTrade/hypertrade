@@ -184,7 +184,9 @@ export function useHlMarket(
       const subs = [
         l2BookRequest(coin, sigFigsRef.current),
         { type: 'trades', coin },
-        { type: isSpot ? 'activeSpotAssetCtx' : 'activeAssetCtx', coin },
+        // Spot uses the same subscription. `activeSpotAssetCtx` is only the
+        // channel name HL sends back; subscribing to that type is rejected.
+        { type: 'activeAssetCtx', coin },
         { type: 'candle', coin, interval: candleFeedRef.current },
       ];
       for (const subscription of subs) {

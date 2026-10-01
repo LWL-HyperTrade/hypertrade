@@ -15,6 +15,7 @@ import { formatPx, formatSz, formatUsd, type Clearinghouse } from '../../lib/hlM
 import {
   ensureTradingReady,
   getAssetIdAndMeta,
+  resolveResidentBuilder,
   invalidateTradingReady,
   isWalletUserRejectedRequest,
   placeDeskOrder,
@@ -727,11 +728,14 @@ export function OrderTicket({
       const provider = getTradeProvider ? await getTradeProvider() : await getEthereumProvider();
       if (!provider || !activeAddress) throw new Error('Wallet is not ready. Sign in again.');
       const userAddress = activeAddress;
+      const feeBuilder = tradeAddress
+        ? await resolveResidentBuilder(tenant.builder_address)
+        : tenant.builder_address;
       const ready = await ensureTradingReady({
         provider,
         userAddress,
         requiredFeeTenths: tenant.builder_fee_tenths,
-        builderAddress: tenant.builder_address,
+        builderAddress: feeBuilder,
         onStep: setStep,
       });
       setStep('Sending order');
@@ -746,7 +750,7 @@ export function OrderTicket({
             limitPx: kind === 'limit' ? Number(price) : undefined,
             feeTenths: tenant.builder_fee_tenths,
             cloidPrefix: tenant.cloid_prefix,
-            builderAddress: tenant.builder_address,
+            builderAddress: feeBuilder,
             tif: kind === 'limit' ? tif : undefined,
           })
         : await placeDeskOrder({
@@ -763,7 +767,7 @@ export function OrderTicket({
             marginMode: effectiveMargin,
             feeTenths: tenant.builder_fee_tenths,
             cloidPrefix: tenant.cloid_prefix,
-            builderAddress: tenant.builder_address,
+            builderAddress: feeBuilder,
             reduceOnly,
             tif: kind === 'limit' ? tif : undefined,
             tpTriggerPx: wantTp ? tp : undefined,

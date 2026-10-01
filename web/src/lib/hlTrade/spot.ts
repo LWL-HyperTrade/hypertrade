@@ -48,6 +48,30 @@ function aliasBase(raw: string): string {
   return SPOT_BASE_ALIASES[u] ?? u;
 }
 
+/** Base token name → USDC spot pair id (`KNTQ` → `@334`). allMids is keyed by the pair id. */
+export async function spotUsdcPairByBase(): Promise<Map<string, string>> {
+  const data = await getSpotMetaAndAssetCtxs();
+  const tokens = data[0]?.tokens ?? [];
+  const universe = data[0]?.universe ?? [];
+  const usdcIndex = tokens.find((t) => String(t?.name ?? '').toUpperCase() === 'USDC')?.index;
+  const nameByIndex = new Map<number, string>();
+  for (const t of tokens) {
+    if (t?.index == null) continue;
+    const name = String(t.name ?? '').trim().toUpperCase();
+    if (name) nameByIndex.set(t.index, name);
+  }
+  const out = new Map<string, string>();
+  if (usdcIndex == null) return out;
+  for (const u of universe) {
+    const toks = u?.tokens;
+    const pair = String(u?.name ?? '').trim();
+    if (!pair || !toks || toks.length < 2 || toks[1] !== usdcIndex) continue;
+    const base = nameByIndex.get(toks[0]);
+    if (base && !out.has(base)) out.set(base, pair);
+  }
+  return out;
+}
+
 export async function resolveSpotSymbol(baseOrPair: string): Promise<string> {
   const data = await getSpotMetaAndAssetCtxs();
   const meta = data[0];
@@ -272,8 +296,26 @@ export async function placeSpotDeskOrder(input: {
   const px = input.orderType === 'limit' ? input.limitPx : marketPx;
   if (!px || px <= 0) throw new Error('Missing price');
   const priceDecimals = Number.isFinite(pxDecimals ?? NaN) ? (pxDecimals as number) : szDecimals;
-  const p = formatPrice(px, priceDecimals, 'spot');
-  if (sizeUnitsParsed * Number(p) + 1e-9 < MIN_ORDER_USD) {
+  // Market sells are sent as a limit 3% under the mid so they still cross the
+  // book. Hyperliquid's $10 minimum uses that limit, not the mark the slider
+  // shows, so a $10.20 bag becomes ~$9.89 and is rejected. If the mid value
+  // already clears $10, lift the limit back toward the mid until the wire
+  // notional does too. Stay at or below the mid so the sell can still fill.
+  let p = formatPrice(px, priceDecimals, 'spot');
+  const wireNotional = () => sizeUnitsParsed * Number(p);
+  if (input.orderType === 'market' && wireNotional() + 1e-9 < MIN_ORDER_USD && sizeUnitsParsed * refPx + 1e-9 >= MIN_ORDER_USD) {
+    const needPx = MIN_ORDER_USD / sizeUnitsParsed;
+    let attempt = input.side === 'sell' ? Math.min(refPx, Math.max(px, needPx)) : Math.max(refPx, Math.min(px, needPx));
+    for (let i = 0; i < 6 && wireNotional() + 1e-9 < MIN_ORDER_USD; i += 1) {
+      p = formatPrice(attempt, priceDecimals, 'spot');
+      if (wireNotional() + 1e-9 >= MIN_ORDER_USD) break;
+      attempt = input.side === 'sell' ? Math.min(refPx, attempt * 1.0005) : Math.max(refPx, attempt * 0.9995);
+    }
+    if (wireNotional() + 1e-9 < MIN_ORDER_USD) {
+      p = formatPrice(refPx, priceDecimals, 'spot');
+    }
+  }
+  if (wireNotional() + 1e-9 < MIN_ORDER_USD) {
     throw new Error('Order must have minimum value of $10.');
   }
 

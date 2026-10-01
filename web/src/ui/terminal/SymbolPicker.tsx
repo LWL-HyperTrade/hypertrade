@@ -114,7 +114,10 @@ export function SymbolPicker({
   const pricedMarkets = useMemo(() => {
     if (!liveByCoin.size) return markets;
     return markets.map((a) => {
-      const live = midFromAllMids(liveByCoin, a.coin);
+      const live =
+        a.isSpotOnly && a.spotSymbol
+          ? midFromAllMids(liveByCoin, a.spotSymbol) ?? midFromAllMids(liveByCoin, a.coin)
+          : midFromAllMids(liveByCoin, a.coin);
       if (live == null || live <= 0) return a;
       const catalogMark = num(a.markPx);
       const prev = impliedPrevDay(catalogMark, a.change24h ?? null);

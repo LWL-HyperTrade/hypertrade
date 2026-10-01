@@ -7,6 +7,7 @@ import {
   cancelDeskOrder,
   cancelDeskOrders,
   ensureTradingReady,
+  resolveResidentBuilder,
   getAssetIdAndMeta,
   getSpotAssetData,
   invalidateTradingReady,
@@ -50,6 +51,7 @@ import { OrderTicket } from './OrderTicket';
 import { AccountDock } from './AccountDock';
 import { SymbolPicker } from './SymbolPicker';
 import { FeesSheet } from '../FeesSheet';
+import { AssetInfoSheet } from './AssetInfoSheet';
 import { WalletSheet } from '../WalletSheet';
 import { useTenantPaths } from '../../lib/brandedHost';
 import { useCreatorFavicon } from '../../lib/useTenantBrand';
@@ -107,6 +109,7 @@ export function TenantApp({ slug, coin }: Props) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerTab, setPickerTab] = useState<SymbolPickerTab>('all');
   const [feesOpen, setFeesOpen] = useState(false);
+  const [infoOpen, setInfoOpen] = useState(false);
   const [archiveConfirm, setArchiveConfirm] = useState(false);
   const [fundingLeftMs, setFundingLeftMs] = useState(() => msUntilNextFunding());
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -458,13 +461,17 @@ export function TenantApp({ slug, coin }: Props) {
         ? await getResidentEthereumProvider(residentWallet)
         : await getEthereumProvider();
     if (!provider) throw new Error('Wallet is not ready. Sign in again.');
+    const feeBuilder =
+      book === 'resident' && canUseResidentBook
+        ? await resolveResidentBuilder(tenant.builder_address)
+        : tenant.builder_address;
     const ready = await ensureTradingReady({
       provider,
       userAddress: signingAddress,
       requiredFeeTenths: tenant.builder_fee_tenths,
-      builderAddress: tenant.builder_address,
+      builderAddress: feeBuilder,
     });
-    return { ready, userAddress: signingAddress };
+    return { ready, userAddress: signingAddress, feeBuilder };
   };
 
   const closePosition = async (position: Clearinghouse['positions'][number]) => {
@@ -472,7 +479,7 @@ export function TenantApp({ slug, coin }: Props) {
     setCloseError(null);
     setClosingCoin(position.coin);
     try {
-      const { ready, userAddress } = await prepareTrade();
+      const { ready, userAddress, feeBuilder } = await prepareTrade();
       const result = await marketCloseDeskPosition({
         agentPrivateKey: ready.agentPrivateKey,
         symbol: position.coin,
@@ -481,7 +488,7 @@ export function TenantApp({ slug, coin }: Props) {
         oraclePx: num(markets.find((m) => m.coin === position.coin)?.markPx) ?? undefined,
         feeTenths: tenant.builder_fee_tenths,
         cloidPrefix: tenant.cloid_prefix,
-        builderAddress: tenant.builder_address,
+        builderAddress: feeBuilder,
       });
       // Attribution is best-effort (same as mobile TenantProvider); do not
       // keep the row spinning on it.
@@ -540,7 +547,7 @@ export function TenantApp({ slug, coin }: Props) {
     let closed = 0;
     let lastErr: string | null = null;
     try {
-      const { ready, userAddress } = await prepareTrade();
+      const { ready, userAddress, feeBuilder } = await prepareTrade();
       for (let i = 0; i < rows.length; i++) {
         const position = rows[i];
         if (i > 0) await new Promise((r) => setTimeout(r, 200));
@@ -558,7 +565,7 @@ export function TenantApp({ slug, coin }: Props) {
               oraclePx,
               feeTenths: tenant.builder_fee_tenths,
               cloidPrefix: tenant.cloid_prefix,
-              builderAddress: tenant.builder_address,
+              builderAddress: feeBuilder,
             });
             void (async () => {
               try {
@@ -654,7 +661,7 @@ export function TenantApp({ slug, coin }: Props) {
     setTpslBusy(true);
     setTpslError(null);
     try {
-      const { ready } = await prepareTrade();
+      const { ready, feeBuilder } = await prepareTrade();
 
       // Two exchange actions total, whatever the count: one batched cancel of
       // the existing TP/SL triggers, then one `positionTpsl` order carrying
@@ -683,7 +690,7 @@ export function TenantApp({ slug, coin }: Props) {
         tpTriggerPx: tp,
         slTriggerPx: sl,
         feeTenths: tenant.builder_fee_tenths,
-        builderAddress: tenant.builder_address,
+        builderAddress: feeBuilder,
       });
 
       setTpslTarget(null);
@@ -806,7 +813,7 @@ export function TenantApp({ slug, coin }: Props) {
     setEditBusy(true);
     setEditError(null);
     try {
-      const { ready } = await prepareTrade();
+      const { ready, feeBuilder } = await prepareTrade();
       await modifyDeskOrder({
         agentPrivateKey: ready.agentPrivateKey,
         symbol: o.coin,
@@ -819,7 +826,7 @@ export function TenantApp({ slug, coin }: Props) {
         isTrigger,
         tpsl: o.tpsl,
         feeTenths: tenant.builder_fee_tenths,
-        builderAddress: tenant.builder_address,
+        builderAddress: feeBuilder,
       });
       setEditTarget(null);
       notify({ kind: 'ok', message: `Order updated on ${displaySymbol(o.coin)}` });
@@ -1150,6 +1157,15 @@ export function TenantApp({ slug, coin }: Props) {
 
           <div className="hidden h-5 w-px shrink-0 bg-stroke-weak sm:block" />
 
+          {selected ? (
+            <button
+              type="button"
+              className="shrink-0 rounded-md border border-stroke-weak px-2 py-1 text-[11px] font-extrabold text-fg-subtle hover:bg-fill-hover hover:text-fg"
+              onClick={() => setInfoOpen(true)}
+            >
+              Info
+            </button>
+          ) : null}
           <div className="shrink-0 py-1.5">
             <span className="mr-1.5 text-[11px] text-fg-subtle">Mark</span>
             <RollingMark value={mark} className={`text-[15px] font-bold sm:text-[16px] ${chgClass(chg)}`} />
@@ -1199,6 +1215,7 @@ export function TenantApp({ slug, coin }: Props) {
                     setInterval(next);
                   }}
                   symbol={symbol}
+                  kind={isSpotMode ? 'spot' : 'perp'}
                   watermark={{ name: tenant.app_name, logoUrl: tenant.logo_url }}
                   lines={chartLines}
                 />
@@ -1395,6 +1412,10 @@ export function TenantApp({ slug, coin }: Props) {
         onClose={() => setPickerOpen(false)}
         onPick={pickMarket}
       />
+
+      {infoOpen && selected ? (
+        <AssetInfoSheet asset={selected} mark={mark} onClose={() => setInfoOpen(false)} />
+      ) : null}
 
       {feesOpen ? (
         <FeesSheet

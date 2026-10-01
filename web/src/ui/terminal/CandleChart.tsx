@@ -63,6 +63,8 @@ type Props = {
   interval: CandleInterval;
   onInterval: (next: CandleInterval) => void;
   symbol: string;
+  /** Spot-only books must not be labeled Perp. */
+  kind?: 'perp' | 'spot';
   watermark?: ChartWatermarkBrand | null;
   /** Live position / open-order lines for `symbol` (gear toggle controls visibility). */
   lines?: ChartPriceLine[];
@@ -81,7 +83,7 @@ function GearToggle({ label, on, onToggle }: { label: string; on: boolean; onTog
   );
 }
 
-export function CandleChart({ candles, interval, onInterval, symbol, watermark, lines }: Props) {
+export function CandleChart({ candles, interval, onInterval, symbol, kind = 'perp', watermark, lines }: Props) {
   const [visible, setVisible] = useState<CandleInterval[]>(() => getVisibleChartIntervals());
   const [engine] = useState<ChartEngine>(() => {
     const saved = getSavedChartEngine();
@@ -152,7 +154,9 @@ export function CandleChart({ candles, interval, onInterval, symbol, watermark, 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div ref={menuRef} className="relative flex shrink-0 items-center gap-1 border-b border-stroke-weak px-1.5 py-1 sm:gap-2 sm:px-2">
-        <span className="hidden shrink-0 text-[11px] font-medium text-fg-muted sm:inline">{symbol} · Perp</span>
+        <span className="hidden shrink-0 text-[11px] font-medium text-fg-muted sm:inline">
+          {symbol} · {kind === 'spot' ? 'Spot' : 'Perp'}
+        </span>
         <div className="flex min-w-0 flex-1 items-center gap-0.5">
           <div className="no-scrollbar flex min-w-0 items-center gap-0.5 overflow-x-auto">
             {shownToolbar.map((id) => (

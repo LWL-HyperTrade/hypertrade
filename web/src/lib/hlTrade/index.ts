@@ -17,6 +17,7 @@ export {
 export type { DeskOrderType, PlaceDeskOrderInput, PlaceDeskOrderResult } from './placeOrder';
 export {
   getSpotAssetData,
+  spotUsdcPairByBase,
   placeSpotDeskOrder,
   transferUsdSpotPerp,
   sendPerpUsdc,
@@ -24,6 +25,7 @@ export {
 } from './spot';
 export type { SpotAssetData } from './spot';
 export { getHlInfoClient, withUserSignedExchange } from './clients';
+export { resolveResidentBuilder } from './resident';
 export { fetchHlRewards, claimHlRewards, HL_CLAIM_MIN_USD } from './claimRewards';
 export type { HlRewards } from './claimRewards';
 export {

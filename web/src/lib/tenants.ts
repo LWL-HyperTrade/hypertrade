@@ -344,9 +344,13 @@ export type AssetRow = {
   growthMode?: boolean | string | null;
   deployerFeeScale?: number | string | null;
   markPx?: string | null;
+  /** HL spot universe name (`@334`). Live mids are keyed by this, not `coin`. */
+  spotSymbol?: string | null;
   change24h?: number | null;
   dayNtlVlm?: string | number | null;
   maxLeverage?: number | null;
+  /** Next earnings date from the stock catalog, `YYYY-MM-DD`. */
+  nextEarnings?: string | null;
 };
 
 function catalogKeys(coin: string): string[] {

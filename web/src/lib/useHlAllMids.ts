@@ -79,6 +79,20 @@ function applyMids(mids: Record<string, string>, dex?: string | null) {
   }
 }
 
+/** Spot pairs are `@N` / `BASE/QUOTE`. `fastAssetCtxs` does not include them. */
+function isSpotMidKey(coin: string): boolean {
+  return coin.startsWith('@') || coin.includes('/');
+}
+
+function applySpotMids(mids: Record<string, string>) {
+  for (const [coin, price] of Object.entries(mids)) {
+    if (!isSpotMidKey(coin)) continue;
+    const px = num(price);
+    if (px == null) continue;
+    put(coin, px);
+  }
+}
+
 function applyFastCtxs(ctxs: Record<string, FastCtx>) {
   for (const [coin, ctx] of Object.entries(ctxs)) {
     if (!ctx) continue;
@@ -221,11 +235,15 @@ export function useHlAllMidsSocket(dexes: string[]) {
             });
           return;
         }
-        if (fastLive) return;
-        if (msg.channel !== 'allMids' || typeof msg.data !== 'object' || !msg.data?.mids) return;
-        const dex = typeof msg.data.dex === 'string' && msg.data.dex ? msg.data.dex : null;
-        if (!dex) feed.lastMainAt = Date.now();
-        applyMids(msg.data.mids, dex);
+        if (msg.channel === 'allMids' && typeof msg.data === 'object' && msg.data?.mids) {
+          const dex = typeof msg.data.dex === 'string' && msg.data.dex ? msg.data.dex : null;
+          if (fastLive) {
+            if (!dex) applySpotMids(msg.data.mids);
+            return;
+          }
+          if (!dex) feed.lastMainAt = Date.now();
+          applyMids(msg.data.mids, dex);
+        }
       };
       socket.onclose = () => {
         if (ws !== socket) return;

@@ -256,7 +256,17 @@ export function buildOpeningPrompt(input: OpeningPromptInput): string {
   bars freely. When you do trade, keep size at the low end of the band.
 - Quiet tape can still resolve into trends — but the bar to open is higher.`
     : activeEntry
-      ? `
+      ? flags.flowRatio3 == null
+        ? `
+
+**ENTRY APPETITE** (default):
+- Futures taker flow is missing on this bar. Do not treat that as a reason to
+  probe. Stay FLAT unless OI and premium agree on one side at the normal gate.
+- When flow is present, a mildly better side can be a small position. Guards
+  below still modulate SIZE first.
+- Risk discipline is unchanged: size bands, stops, and take-profits stay the
+  same. More positions when there is edge — not bigger ones.`
+        : `
 
 **ENTRY APPETITE** (default):
 - Sidelining every ambiguous bar is a failure mode. When one side is even

@@ -54,6 +54,47 @@ export async function fetchBuilderConfig(): Promise<{ address: string; fee: numb
   return request('/builder-config');
 }
 
+export type CryptoMetadata = {
+  symbol: string;
+  category: string | null;
+  description: string | null;
+  max_supply: number | null;
+  circulating_supply: number | null;
+  whitepaper_url: string | null;
+};
+
+export type StockFundamentals = {
+  symbol: string;
+  description: string | null;
+  sector: string | null;
+  industry: string | null;
+  outstanding_shares: number | null;
+  pe_ratio: number | null;
+  eps: number | null;
+  revenue: number | null;
+  net_income: number | null;
+  gross_profit: number | null;
+  operating_income: number | null;
+  ebitda: number | null;
+  profit_margin: number | null;
+  free_cash_flow: number | null;
+  week52_high: number | null;
+  week52_low: number | null;
+};
+
+export async function fetchCryptoMetadata(symbol: string): Promise<CryptoMetadata | null> {
+  try {
+    return await request<CryptoMetadata>(`/crypto-metadata/${encodeURIComponent(symbol)}`);
+  } catch (err) {
+    if (err instanceof Error && /not found/i.test(err.message)) return null;
+    throw err;
+  }
+}
+
+export async function fetchStockFundamentals(symbol: string): Promise<StockFundamentals> {
+  return request<StockFundamentals>(`/stock-fundamentals/${encodeURIComponent(symbol)}`);
+}
+
 export async function fetchCatalogAssets(): Promise<AssetRow[]> {
   const [hip3, crypto] = await Promise.all([
     request<{ assets: AssetRow[] }>('/assets'),

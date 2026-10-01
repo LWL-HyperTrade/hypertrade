@@ -40,6 +40,7 @@ import {
   isWalletUserRejectedRequest,
   sendPerpUsdc,
   sendSpotToken,
+  spotUsdcPairByBase,
   transferUsdSpotPerp,
   withdrawFromHyperliquid,
   type Hex,
@@ -1091,7 +1092,13 @@ function PortfolioTable({
     refetchInterval: 5_000,
     staleTime: 2_000,
   });
+  const pairsQ = useQuery({
+    queryKey: ['hl', 'spot-usdc-pairs'],
+    queryFn: () => spotUsdcPairByBase(),
+    staleTime: 5 * 60_000,
+  });
   const mids = midsQ.data ?? {};
+  const spotPairs = pairsQ.data;
   const pooled =
     !forceClassSplit &&
     (clearing?.abstractionMode === 'unifiedAccount' ||
@@ -1242,7 +1249,9 @@ function PortfolioTable({
 
   const tokenUsd = (b: SpotBalance): number | null => {
     if (b.coin.toUpperCase() === 'USDC') return b.total;
+    const pair = spotPairs?.get(b.coin.toUpperCase());
     const px =
+      (pair ? midFor(mids, pair) : null) ??
       midFor(mids, `${b.coin}/USDC`) ??
       midFor(mids, b.coin) ??
       midFor(mids, `U${b.coin}`) ??
