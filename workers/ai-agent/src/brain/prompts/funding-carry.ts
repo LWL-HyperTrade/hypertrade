@@ -80,16 +80,16 @@ export function renderFundingCarrySection(ctx: FundingCarryContext): string {
   return `
 **FUNDING CARRY** (Hyperliquid position + market rate):
 - Accrued funding (your P&L, Portfolio sign): ${dragLine}
-- Market funding (CoinGlass): ${fmtBps(ctx.marketFundingBps)} (Δ since entry: ${fmtBps(ctx.marketFundingChangeBps)})
+- Market funding: ${fmtBps(ctx.marketFundingBps)} (Δ since entry: ${fmtBps(ctx.marketFundingChangeBps)})
 - Next / current HL funding: ${fmtBps(ctx.hlNextFundingBps)} (positive ⇒ longs pay shorts)
 - vs your ${ctx.direction}: market ${againstMarket ? 'AGAINST' : 'with/neutral'}, HL ${againstHl ? 'AGAINST' : 'with/neutral'}${
     receiving ? '; you are RECEIVING funding' : ''
   }
 
 **FUNDING RULES** (do NOT overreact):
-- Rate alone is NEVER enough to EXIT a winning position.
+- Rate alone is NEVER enough to ${ctx.unrealizedPnlUsd < 0 ? 'CUT a losing position' : 'EXIT a winning position'}.
 - A hot rate may count as **one soft trim signal** ONLY if accrued funding cost is MATERIAL: paid ≥ max($${FUNDING_DRAG_MIN_USD}, ${Math.round(FUNDING_DRAG_MIN_FRAC_OF_PNL * 100)}% of |unrealized PnL|) AND rate is still against your side.
-- If |accrued funding| is tiny vs open gains, IGNORE funding for action choice — you may mention it in the reason, but do not trim/exit for it.
+- If |accrued funding| is tiny vs the open ${ctx.unrealizedPnlUsd < 0 ? 'loss' : 'gain'}, IGNORE funding for action choice — you may mention it in the reason, but do not trim/exit for it.
 - If you are receiving funding, treat elevated |rate| as supportive carry, not a warning.
 - Next HL funding is near-term carry context, not a hard exit trigger.
 `.trim();

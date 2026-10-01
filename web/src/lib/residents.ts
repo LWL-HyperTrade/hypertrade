@@ -104,11 +104,11 @@ export const AI_MODEL_OPTIONS: Array<{
   choice: AiAgentModelChoice;
   unavailable?: boolean;
 }> = [
-  { label: 'GPT', choice: { provider: 'openai', model: 'gpt-5.6-terra' } },
-  { label: 'Gemini', choice: { provider: 'gemini', model: 'gemini-3.7-flash' } },
-  { label: 'Grok', choice: { provider: 'xai', model: 'grok-4.5' } },
-  { label: 'DeepSeek', choice: { provider: 'deepseek', model: 'deepseek-v4-flash' } },
-  { label: 'Claude', choice: { provider: 'claude', model: 'claude-opus-5' }, unavailable: true },
+  { label: 'GPT', choice: { provider: 'openai', model: 'gpt-6.1-sol' } },
+  { label: 'Gemini', choice: { provider: 'gemini', model: 'gemini-3.8-flash' } },
+  { label: 'Grok', choice: { provider: 'xai', model: 'grok-4.7' } },
+  { label: 'DeepSeek', choice: { provider: 'deepseek', model: 'deepseek-flash' } },
+  { label: 'Claude', choice: { provider: 'claude', model: 'claude-opus-5-5' }, unavailable: true },
 ];
 
 export function defaultModelChoice(): AiAgentModelChoice {

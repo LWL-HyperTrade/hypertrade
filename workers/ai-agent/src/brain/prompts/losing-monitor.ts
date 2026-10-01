@@ -148,6 +148,7 @@ export interface LosingMonitorInput {
       pnl_pct: number
       /** Thesis conviction (0-100) reported at that check; null on legacy rows. */
       thesis_conviction?: number | null
+      engineNote?: string
     }> // Last 3 monitoring decisions
     /** Successful DCA count on this position (max 2). */
     dca_count?: number
@@ -350,27 +351,52 @@ ${sessionSection}${renderXyzSessionSection(getXyzSessionContext(input.asset))}${
 
 ${fundingSection}
 **DETAILED MARKET ANALYSIS** (for user transparency):
-- **Flow Dynamics**: Current flow ratio shows ${input.updatedData.flowRatio ? input.updatedData.flowRatio.toFixed(2) : 'N/A'} (${input.updatedData.flowRatio && input.updatedData.flowRatio > 1.2 ? 'BUY DOMINANT' : input.updatedData.flowRatio && input.updatedData.flowRatio < 0.8 ? 'SELL DOMINANT' : 'BALANCED'})
+- **Flow Dynamics**: Current flow ratio shows ${input.updatedData.flowRatio != null && Number.isFinite(input.updatedData.flowRatio) ? `${input.updatedData.flowRatio.toFixed(2)} (${input.updatedData.flowRatio > 1.2 ? 'BUY DOMINANT' : input.updatedData.flowRatio < 0.8 ? 'SELL DOMINANT' : 'BALANCED'})` : 'N/A (unavailable — not a balanced tape)'}
 ${!isHip3Listed
     ? `- **Flow Path (CVD, 24-bar)**: futures ${input.updatedData.cvdNet24Usd != null ? fmtUsd(input.updatedData.cvdNet24Usd) : 'N/A'}, spot ${input.updatedData.spotCvdNet24Usd != null ? fmtUsd(input.updatedData.spotCvdNet24Usd) : 'N/A'} | divergence: ${input.updatedData.cvdDivergence === 'bearish' ? 'BEARISH (buyers absorbed — upside fragile)' : input.updatedData.cvdDivergence === 'bullish' ? 'BULLISH (sellers absorbed — downside fragile)' : input.updatedData.cvdDivergence === 'none' ? 'none' : 'N/A'}\n`
     : ''}
 ${isHip3Listed
     ? ''
     : `- **Open Interest**: OI change of ${input.updatedData.oiDeltaPct ? input.updatedData.oiDeltaPct.toFixed(2) : 'N/A'}% (${input.updatedData.oiDeltaPct && input.updatedData.oiDeltaPct > 1 ? 'STRONG BUILDUP' : input.updatedData.oiDeltaPct && input.updatedData.oiDeltaPct < -1 ? 'LIQUIDATION WAVE' : 'STABLE'})\n`}
-- **Premium Analysis**: Premium at ${input.updatedData.premiumBps ? input.updatedData.premiumBps.toFixed(1) : 'N/A'} bps (${input.updatedData.premiumBps && input.updatedData.premiumBps > 10 ? 'FUTURES OVERPRICED' : input.updatedData.premiumBps && input.updatedData.premiumBps < -10 ? 'FUTURES UNDERPRICED' : 'FAIR VALUE'})
+- **Premium Analysis**: Premium at ${(() => {
+  const p = input.updatedData.premiumBps
+  if (p == null || !Number.isFinite(p)) return 'N/A'
+  const tag = p >= 5 ? 'FUTURES OVERPRICED' : p <= -5 ? 'FUTURES UNDERPRICED' : 'FAIR VALUE'
+  return p.toFixed(1) + ' bps (' + tag + ')'
+})()}
 ${optionsInScope
-    ? `- **Volatility Regime**: IV ${input.updatedData.ivDelta && input.updatedData.ivDelta > 0 ? 'EXPANDING' : 'COMPRESSING'} by ${input.updatedData.ivDelta ? Math.abs(input.updatedData.ivDelta).toFixed(2) : 'N/A'} pts (${input.updatedData.ivDelta && input.updatedData.ivDelta > 3 ? 'FEAR SPIKING' : input.updatedData.ivDelta && input.updatedData.ivDelta < -1 ? 'COMPLACENCY' : 'NORMAL'})`
+    ? '- **Volatility Regime**: ' + (() => {
+        const d = input.updatedData.ivDelta
+        if (d == null || !Number.isFinite(d)) return 'IV this bar: N/A'
+        const tone = d >= 3 ? 'EXPANDING' : d <= -1 ? 'COMPRESSING' : 'little changed'
+        const fear = d >= 3 ? 'FEAR SPIKING' : d <= -1 ? 'COMPLACENCY' : 'NORMAL'
+        return 'IV this bar ' + tone + ' by ' + Math.abs(d).toFixed(2) + ' pts (this bar only — since-entry change is above) (' + fear + ')'
+      })()
     : hasEquityOptions
       ? `- **Options**: Lead "reason" with EQUITY OPTIONS (ATM IV / skew / put-call). Omit venue OI from reason (do not write that it is N/A).`
       : hasMetalsOptions
         ? `- **Options**: Lead "reason" with METALS OPTIONS (GLD/SLV) + DXY. Omit venue OI; no corporate earnings.`
         : `- **Options**: Not applicable for ${displayAsset}. Do not cite missing IV/options in your reason.`}
 ${!isHip3Listed
-    ? `- **Liquidation Pressure**: ${input.updatedData.liquidations_1h ? `${input.updatedData.liquidations_1h.longs > input.updatedData.liquidations_1h.shorts ? 'longs being flushed' : 'shorts being flushed'} (${Math.abs(input.updatedData.liquidations_1h.longs - input.updatedData.liquidations_1h.shorts) / 1e6 > 5 ? 'HIGH' : 'moderate'} imbalance last bar)` : 'N/A — do not cite liquidation pressure in your reason'}\n`
+    ? '- **Liquidation Pressure**: ' + (() => {
+        const liq = input.updatedData.liquidations_1h
+        if (!liq) return 'N/A — do not cite liquidation pressure in your reason'
+        if (Math.max(liq.longs, liq.shorts) < 100_000) return 'quiet last bar — do not cite a flush'
+        const side = liq.longs > liq.shorts ? 'longs being flushed' : 'shorts being flushed'
+        const mag = Math.abs(liq.longs - liq.shorts) / 1e6 > 5 ? 'HIGH' : 'moderate'
+        return side + ' (' + mag + ' imbalance last bar)'
+      })() + '\n'
     : hip3LiqRelevant
       ? `- **Venue liq pressure**: ${input.updatedData.liquidations_1h ? `${input.updatedData.liquidations_1h.longs > input.updatedData.liquidations_1h.shorts ? 'longs flushed' : 'shorts flushed'} last bar — local HL fuel only, not a cut trigger by itself` : 'N/A'}\n`
       : ''}
-- **Basis Analysis**: ${input.updatedData.basis_change_bps != null ? `perp-spot premium ${input.updatedData.basis_change_bps > 0 ? 'WIDENED' : 'NARROWED'} ${Math.abs(input.updatedData.basis_change_bps).toFixed(1)} bps since entry (${Math.abs(input.updatedData.basis_change_bps) > 10 ? 'SIGNIFICANT shift' : 'normal drift'})` : 'N/A — entry bar outside data window'}
+- **Basis Analysis**: ${(() => {
+  const d = input.updatedData.basis_change_bps
+  if (d == null || !Number.isFinite(d)) return 'N/A — entry bar outside data window'
+  const side = input.position.direction
+  const against = side === 'SHORT' ? d > 0 : d < 0
+  const shift = Math.abs(d) > 10 ? 'SIGNIFICANT' : 'small'
+  return 'premium moved ' + (d > 0 ? '+' : '') + d.toFixed(1) + ' bps since entry (' + shift + ', ' + (against ? 'against' : 'with') + ' your ' + side + ')'
+})()}
 
 **POSITION HISTORY**:
 - Monitoring Checks: ${input.positionHistory.checks_count}
@@ -379,7 +405,7 @@ ${!isHip3Listed
 - Trim Count: ${trimCount}/3${trimCount >= 3 ? ' — max trims reached; do NOT return action "trim" (HOLD, CUT, or FLIP only)' : ''}
 ${convictionTrajectory ? `- Thesis Conviction Trajectory: ${convictionTrajectory}\n` : ''}- Previous Decisions:
 ${input.positionHistory.previous_decisions.length === 0 ? '  • None (first monitoring check)' : input.positionHistory.previous_decisions.map(d => 
-  `  • ${new Date(d.timestamp).toLocaleTimeString()}: ${d.action} (P&L: ${d.pnl_pct >= 0 ? '+' : ''}${d.pnl_pct.toFixed(2)}%${d.thesis_conviction != null ? `, conviction: ${d.thesis_conviction}` : ''}) - ${d.reasoning}`
+  `  • ${new Date(d.timestamp).toLocaleTimeString()}: ${d.action} (P&L: ${d.pnl_pct >= 0 ? '+' : ''}${d.pnl_pct.toFixed(2)}%${d.thesis_conviction != null ? `, conviction: ${d.thesis_conviction}` : ''})${d.engineNote ? ` [${d.engineNote}]` : ''} - ${d.reasoning}`
 ).join('\n')}
 
 ---
@@ -404,13 +430,13 @@ If NO → CUT_LOSS (thesis invalidated, get out now)
 ${isHip3Listed
     ? `**CUT** (Immediate cut, flip allowed) if **2/2** cut triggers OR listed-options / stored invalidation fires:
 1. 🔴 **Premium Flip**: Premium flips through 0 opposite your side OR pushes further ≥ 10 bps against you
-2. 🔴 **Opposite Flow Dominance**: (sell$ / buy$ ≥ 1.6 for longs; inverse for shorts)
+2. 🔴 **Opposite Flow Dominance**: (sell$ / buy$ ≥ 1.6 for longs; inverse for shorts). Flow Ratio N/A is NOT dominance.
 - Also CUT if EQUITY/METALS OPTIONS clearly reverse the open thesis (e.g. skew flips against you) or a stored invalidation criterion fires.
 - Set \`cutTriggers.oiAgainst\` = **false** always for HIP-3 (worker ignores venue OI — do not discuss OI in reason).`
     : `**CUT** (Immediate cut, flip allowed) if 2/3:
 1. 🔴 **OI Against**: OI moves against your side by ≥ 1% over last 2 bars
 2. 🔴 **Premium Flip**: Premium flips through 0 opposite your side OR pushes further ≥ 10 bps against you
-3. 🔴 **Opposite Flow Dominance**: (sell$ / buy$ ≥ 1.6 for longs; inverse for shorts)`}
+3. 🔴 **Opposite Flow Dominance**: (sell$ / buy$ ≥ 1.6 for longs; inverse for shorts). Flow Ratio N/A is NOT dominance — set oppositeFlow false and metrics.flowSameSide true when taker flow is missing.`}
 
 **TRIM** (Reduce 33-50%, keep probe) if:
 - ⚠️ ${isHip3Listed ? '1/2 cut triggers (premium/flow)' : '1/3 cut triggers'} met (thesis WEAKENING but not fully invalidated yet)
@@ -472,6 +498,7 @@ If HOPEFUL or PANIC → Your judgment is CLOUDED → Trust the data, not your gu
 3. **Never hope** → Data-driven decisions only
 4. **Ask yourself**: "Would I enter NOW if I had no position?"
 5. **DCA is rare** — averaging down is allowed only for intact thesis + chop
+6. **newStop** must be exactly "breakeven" or "tighter". A price is ignored and the stop does not move.
 
 **OUTPUT FORMAT**:
 

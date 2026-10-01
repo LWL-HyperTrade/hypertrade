@@ -341,28 +341,28 @@ const MODEL_OPTIONS: {
     labelKey: 'aiAgents.models.gpt',
     logo: require('../assets/images/chatgpt.webp'),
     logoActive: require('../assets/images/chatgpt-black.webp'),
-    choice: { provider: 'openai', model: 'gpt-5.6-terra' },
+    choice: { provider: 'openai', model: 'gpt-6.1-sol' },
   },
   {
     labelKey: 'aiAgents.models.gemini',
     logo: require('../assets/images/gemini.webp'),
-    choice: { provider: 'gemini', model: 'gemini-3.7-flash' },
+    choice: { provider: 'gemini', model: 'gemini-3.8-flash' },
   },
   {
     labelKey: 'aiAgents.models.grok',
     logo: require('../assets/images/xai.webp'),
     logoActive: require('../assets/images/xai-black.webp'),
-    choice: { provider: 'xai', model: 'grok-4.5' },
+    choice: { provider: 'xai', model: 'grok-4.7' },
   },
   {
     labelKey: 'aiAgents.models.deepseek',
     logo: require('../assets/images/deepseek.webp'),
-    choice: { provider: 'deepseek', model: 'deepseek-v4-flash' },
+    choice: { provider: 'deepseek', model: 'deepseek-flash' },
   },
   {
     labelKey: 'aiAgents.models.claude',
     logo: require('../assets/images/claude.webp'),
-    choice: { provider: 'claude', model: 'claude-opus-5' },
+    choice: { provider: 'claude', model: 'claude-opus-5-5' },
     // Temporary Anthropic account restriction — keep entry, block new picks.
     unavailable: true,
   },

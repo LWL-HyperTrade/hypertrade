@@ -420,25 +420,24 @@ async def get_hl_open_perp_positions(
 # (OPENAI_API_KEY, XAI_API_KEY, GEMINI_API_KEY, DEEPSEEK_API_KEY,
 # ANTHROPIC_API_KEY). The backend only validates choices; it never calls LLMs.
 MODEL_REGISTRY: Dict[str, List[str]] = {
-    # 3.7 is the house default; 3.6 kept so existing agent configs still validate.
-    # Worker routes 3.6 / 3.5 → gemini-3.7-flash.
-    "gemini": ["gemini-3.7-flash", "gemini-3.6-flash"],
-    # 4.5 is the house default; 4.3 kept so existing agent configs still validate.
-    # Worker routes 4.3 → grok-4.5.
-    "xai": ["grok-4.5", "grok-4.3"],
-    # Terra is the house OpenAI pick; 5.4 kept so existing agent configs still validate.
-    # Worker routes 5.4 → gpt-5.6-terra (do not use bare gpt-5.6 — that aliases to Sol).
-    "openai": ["gpt-5.6-terra", "gpt-5.4"],
-    # Flash is the house DeepSeek pick (API id `deepseek-v4-flash`).
-    # Pro aliases kept so existing agent configs still validate; worker routes them to flash.
+    # 3.8 is the house default. Older ids stay valid; the worker routes them to 3.8.
+    "gemini": ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash"],
+    # 4.7 is the house default. Older ids stay valid; the worker routes them to 4.7.
+    "xai": ["grok-4.7", "grok-4.5", "grok-4.3"],
+    # 6.1-sol is the house OpenAI pick. Do not use bare gpt-5.6 (that alias is Sol).
+    # Older ids stay valid; the worker routes them to gpt-6.1-sol.
+    "openai": ["gpt-6.1-sol", "gpt-5.6-terra", "gpt-5.4"],
+    # `deepseek-flash` is the current Flash alias (V4.1). Retired v4 ids stay
+    # valid; the worker sends deepseek-flash.
     "deepseek": [
+        "deepseek-flash",
         "deepseek-v4-flash",
         "DeepSeek-V4-Flash",
         "deepseek-v4-pro",
         "DeepSeek-V4-Pro",
     ],
-    # Opus 5 is the house Claude pick; 4.8 kept so older configs still validate.
-    "claude": ["claude-opus-5", "claude-opus-4-8"],
+    # Opus 5.5 is the house Claude pick. UI still marks it Soon.
+    "claude": ["claude-opus-5-5", "claude-opus-5", "claude-opus-4-8"],
 }
 ALLOWED_MODEL_PROVIDERS = set(MODEL_REGISTRY.keys())
 # HIP-3 builder dexes agents may trade. Protocol is `{dex}:{COIN}` for any

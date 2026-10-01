@@ -173,14 +173,14 @@ async def _finnhub_rate_gate() -> None:
                     _finnhub_call_history.popleft()
         _finnhub_call_history.append(now)
 
-# Google Gemini API configuration (with Google Search grounding)
+# Google Gemini API configuration (with Google Search grounding on Ask AI).
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-# TODO(2026-10): gemini-2.5-flash is scheduled to retire ~2026-10-16 (Google GA
-# retirement). Migrate Ask AI (`/gemini/analysis`) + news headline translation
-# (same GEMINI_MODEL_ID) to gemini-3.6-flash or a cheaper 3.x Flash-Lite —
-# confirm Search grounding + structured JSON + thinking_budget=0 still work,
-# and re-check token vs grounding pricing (3.x is ~3–5× tokens vs 2.5).
-GEMINI_MODEL_ID = "gemini-2.5-flash"  # Fast model with search grounding support
+# On-demand Ask AI (`/gemini/analysis`). 3.8 Flash is the discounted 3.x
+# price through 2026-12-31 ($0.75 / $3.75 per 1M), then doubles.
+GEMINI_MODEL_ID = "gemini-3.8-flash"
+# News headlines only. 3.1 Flash-Lite is priced for high-volume translation
+# ($0.25 / $1.50 per 1M). Do not point Ask AI here.
+GEMINI_TRANSLATE_MODEL_ID = "gemini-3.1-flash-lite"
 
 # ExchangeRate-API (display-currency conversion)
 FOREXRATE_KEY = os.getenv("FOREXRATE_KEY")
@@ -10781,8 +10781,8 @@ _NEWS_TARGET_LOCALES: Tuple[str, ...] = (
 
 # ── Gemini-powered headline translation ──────────────────────────────────────
 # We translate ONLY the first N (typically 10) headlines per category, in a
-# single batched call to gemini-2.5-flash with structured JSON output and
-# thinking disabled. Each item is translated exactly once in its lifetime:
+# single batched call to gemini-3.1-flash-lite with structured JSON output and
+# thinking set to minimal. Each item is translated exactly once in its lifetime:
 # subsequent cache refreshes re-use the prior translations by item id and
 # only call Gemini for genuinely new headlines.
 #
@@ -10847,14 +10847,14 @@ def _translate_headlines_sync(headlines: List[Tuple[int, str]]) -> Dict[int, Dic
     prompt = _build_translation_prompt(headlines)
     try:
         response = client.models.generate_content(
-            model=GEMINI_MODEL_ID,
+            model=GEMINI_TRANSLATE_MODEL_ID,
             contents=prompt,
             config=_gtypes.GenerateContentConfig(
                 response_mime_type="application/json",
                 temperature=0.2,
-                # Disable Gemini 2.5's reasoning step — translation is pure
-                # transduction, so thinking-tokens are pure waste here.
-                thinking_config=_gtypes.ThinkingConfig(thinking_budget=0),
+                # 3.x bills thinking tokens as output. Minimal keeps headline
+                # translation from paying for a reasoning trace.
+                thinking_config=_gtypes.ThinkingConfig(thinking_level="MINIMAL"),
             ),
         )
     except Exception as exc:

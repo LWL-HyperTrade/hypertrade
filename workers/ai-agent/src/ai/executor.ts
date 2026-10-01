@@ -3,17 +3,17 @@
  *
  * V1 model catalog (house API keys, one env var per provider on the WORKER
  * service only — the backend never holds model keys):
- *   gemini   → gemini-3.7-flash      (GEMINI_API_KEY)
- *              Legacy 3.6 / 3.5 agent configs are routed onto 3.7.
- *   xai      → grok-4.5              (XAI_API_KEY)
- *              Legacy grok-4.3 agent configs are routed onto 4.5.
- *   openai   → gpt-5.6-terra         (OPENAI_API_KEY)
- *              Explicit terra id — bare `gpt-5.6` routes to Sol ($$$).
- *              Legacy gpt-5.4 agent configs are routed onto terra.
- *   deepseek → deepseek-v4-flash     (DEEPSEEK_API_KEY)
- *              API id is `deepseek-v4-flash` (version DeepSeek-V4-Flash-0731).
- *              Legacy deepseek-v4-pro agent configs are routed onto flash.
- *   claude   → claude-opus-5         (ANTHROPIC_API_KEY; UI still "Soon" while account locked)
+ *   gemini   → gemini-3.8-flash      (GEMINI_API_KEY)
+ *              Legacy 3.7 / 3.6 / 3.5 agent configs are routed onto 3.8.
+ *   xai      → grok-4.7              (XAI_API_KEY)
+ *              Legacy grok-4.5 / 4.3 agent configs are routed onto 4.7.
+ *   openai   → gpt-6.1-sol           (OPENAI_API_KEY)
+ *              Do not send bare `gpt-5.6` (that alias is Sol at Terra's old price).
+ *              Legacy terra / 5.4 agent configs are routed onto 6.1-sol.
+ *   deepseek → deepseek-flash        (DEEPSEEK_API_KEY)
+ *              Current Flash alias (serves V4.1-Flash). Retired ids
+ *              `deepseek-v4-flash` and V4 Pro still validate and route here.
+ *   claude   → claude-opus-5-5       (ANTHROPIC_API_KEY; UI still "Soon")
  *
  * All providers except Anthropic speak the OpenAI chat-completions dialect
  * (Gemini via its OpenAI-compat endpoint). Anthropic uses /v1/messages.
@@ -49,58 +49,60 @@ function resolveApiModel(provider: string, model: string): string {
     const key = model.trim();
     // Never use bare `gpt-5.6` — OpenAI routes that alias to Sol ($5/$30).
     const aliases: Record<string, string> = {
-      'gpt-5.6-terra': 'gpt-5.6-terra',
-      'gpt-5.6-Terra': 'gpt-5.6-terra',
-      // House default moved 5.4 → Terra; keep old agent configs working.
-      'gpt-5.4': 'gpt-5.6-terra',
-      'gpt-5.4-mini': 'gpt-5.6-terra',
+      'gpt-6.1-sol': 'gpt-6.1-sol',
+      'gpt-5.6-terra': 'gpt-6.1-sol',
+      'gpt-5.6-Terra': 'gpt-6.1-sol',
+      'gpt-5.4': 'gpt-6.1-sol',
+      'gpt-5.4-mini': 'gpt-6.1-sol',
     };
-    return aliases[key] ?? 'gpt-5.6-terra';
+    return aliases[key] ?? 'gpt-6.1-sol';
   }
   if (provider === 'deepseek') {
     const key = model.trim();
-    // Wire name is always the catalog slug. Version label Flash-0731 is not
-    // a separate API model id — see https://api-docs.deepseek.com/quick_start/pricing
+    // `deepseek-flash` is the current alias (V4.1-Flash). Retired v4 ids
+    // still accept but should be sent as deepseek-flash.
+    // https://api-docs.deepseek.com/
     const aliases: Record<string, string> = {
-      'DeepSeek-V4-Flash': 'deepseek-v4-flash',
-      'DeepSeek-V4-Flash-0731': 'deepseek-v4-flash',
-      'deepseek-v4-flash': 'deepseek-v4-flash',
-      // House default moved Pro → Flash; keep old agent configs working.
-      'DeepSeek-V4-Pro': 'deepseek-v4-flash',
-      'deepseek-v4-pro': 'deepseek-v4-flash',
+      'deepseek-flash': 'deepseek-flash',
+      'DeepSeek-V4-Flash': 'deepseek-flash',
+      'DeepSeek-V4-Flash-0731': 'deepseek-flash',
+      'deepseek-v4-flash': 'deepseek-flash',
+      'DeepSeek-V4-Pro': 'deepseek-flash',
+      'deepseek-v4-pro': 'deepseek-flash',
     };
-    return aliases[key] ?? 'deepseek-v4-flash';
+    return aliases[key] ?? 'deepseek-flash';
   }
   if (provider === 'gemini') {
-    // House default is 3.7; route legacy 3.6 / 3.5 agent configs onto 3.7.
+    // House default is 3.8; route legacy 3.7 / 3.6 / 3.5 configs onto it.
     const key = model.trim();
     const aliases: Record<string, string> = {
-      'gemini-3.7-flash': 'gemini-3.7-flash',
-      'gemini-3.6-flash': 'gemini-3.7-flash',
-      'gemini-3.5-flash': 'gemini-3.7-flash',
-      'gemini-3.5-flash-preview': 'gemini-3.7-flash',
+      'gemini-3.8-flash': 'gemini-3.8-flash',
+      'gemini-3.7-flash': 'gemini-3.8-flash',
+      'gemini-3.6-flash': 'gemini-3.8-flash',
+      'gemini-3.5-flash': 'gemini-3.8-flash',
+      'gemini-3.5-flash-preview': 'gemini-3.8-flash',
     };
-    return aliases[key] ?? 'gemini-3.7-flash';
+    return aliases[key] ?? 'gemini-3.8-flash';
   }
   if (provider === 'xai') {
     const key = model.trim();
     const aliases: Record<string, string> = {
-      'grok-4.5': 'grok-4.5',
-      // House default moved 4.3 → 4.5; keep old agent configs working.
-      'grok-4.3': 'grok-4.5',
+      'grok-4.7': 'grok-4.7',
+      'grok-4.5': 'grok-4.7',
+      'grok-4.3': 'grok-4.7',
     };
-    return aliases[key] ?? 'grok-4.5';
+    return aliases[key] ?? 'grok-4.7';
   }
   return model;
 }
 
 /**
- * Some models reject non-default `temperature` (Claude Opus 4/5 omit it;
- * OpenAI gpt-5.6-terra only accepts the default 1 — sending 0.5 → 400).
+ * Some models reject non-default `temperature` (Claude Opus omits it;
+ * OpenAI gpt-5.6 / gpt-6 only accept the default — sending 0.5 → 400).
  */
 function omitTemperature(provider: string, model: string): boolean {
-  if (provider === 'claude' && /opus-[45]/i.test(model)) return true;
-  if (provider === 'openai' && /gpt-5\.6|gpt-5\.4/i.test(model)) return true;
+  if (provider === 'claude' && /opus-/i.test(model)) return true;
+  if (provider === 'openai' && /gpt-6|gpt-5\.6|gpt-5\.4/i.test(model)) return true;
   return false;
 }
 
@@ -108,11 +110,12 @@ function omitTemperature(provider: string, model: string): boolean {
 function resolveClaudeModel(model: string): string {
   const key = model.trim();
   const aliases: Record<string, string> = {
-    'claude-opus-5': 'claude-opus-5',
-    'claude-opus-4-8': 'claude-opus-5',
-    'claude-opus-4.8': 'claude-opus-5',
+    'claude-opus-5-5': 'claude-opus-5-5',
+    'claude-opus-5': 'claude-opus-5-5',
+    'claude-opus-4-8': 'claude-opus-5-5',
+    'claude-opus-4.8': 'claude-opus-5-5',
   };
-  return aliases[key] ?? (key.startsWith('claude-') ? key : 'claude-opus-5');
+  return aliases[key] ?? (key.startsWith('claude-') ? key : 'claude-opus-5-5');
 }
 
 /** House key from the worker env; empty string when not configured. */

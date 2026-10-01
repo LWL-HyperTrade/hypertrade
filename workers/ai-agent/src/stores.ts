@@ -213,6 +213,8 @@ export interface PreviousMonitorDecision {
   thesis_conviction: number | null;
   /** thesis_status from that check; null on legacy / winning rows that omitted it. */
   thesis_status: 'INTACT' | 'WEAKENED' | 'INVALIDATED' | null;
+  /** Set when the engine did not run the model's action (young/dust trim → hold). */
+  engineNote?: string;
 }
 
 /**
@@ -249,6 +251,8 @@ export async function getRecentMonitorDecisions(args: {
         reason?: unknown;
         thesis_conviction?: unknown;
         thesis_status?: unknown;
+        trimSkippedYoung?: unknown;
+        llmAction?: unknown;
       };
     }).decisionBody;
     const reason = typeof body?.reason === 'string' ? body.reason : '';
@@ -258,6 +262,8 @@ export async function getRecentMonitorDecisions(args: {
       tsRaw === 'INTACT' || tsRaw === 'WEAKENED' || tsRaw === 'INVALIDATED'
         ? tsRaw
         : null;
+    const heldYoung = body?.trimSkippedYoung === true;
+    const llmAction = typeof body?.llmAction === 'string' ? body.llmAction : '';
     out.push({
       timestamp: String((row as { created_at?: unknown }).created_at ?? ''),
       action: String((d as { action?: unknown }).action ?? 'hold'),
@@ -265,6 +271,10 @@ export async function getRecentMonitorDecisions(args: {
       pnl_pct: pricePct,
       thesis_conviction: Number.isFinite(tc) ? Math.round(tc) : null,
       thesis_status,
+      engineNote:
+        heldYoung && llmAction
+          ? `engine held; model asked ${llmAction} because the position was too young or small to trim`
+          : undefined,
     });
   }
   return out.reverse(); // oldest → newest (prompts read slice(-2) chronologically)

@@ -337,31 +337,36 @@ function displayModelId(model: string): string {
   const key = model.trim();
   if (!key || key === '—') return key;
   const aliases: Record<string, string> = {
-    'gpt-5.6-terra': 'gpt-5.6-terra',
-    'gpt-5.6-Terra': 'gpt-5.6-terra',
-    'gpt-5.4': 'gpt-5.6-terra',
-    'gpt-5.4-mini': 'gpt-5.6-terra',
-    'deepseek-v4-flash': 'deepseek-v4-flash',
-    'DeepSeek-V4-Flash': 'deepseek-v4-flash',
-    'DeepSeek-V4-Flash-0731': 'deepseek-v4-flash',
-    'deepseek-v4-pro': 'deepseek-v4-flash',
-    'DeepSeek-V4-Pro': 'deepseek-v4-flash',
-    'grok-4.5': 'grok-4.5',
-    'grok-4.3': 'grok-4.5',
-    'gemini-3.7-flash': 'gemini-3.7-flash',
-    'gemini-3.6-flash': 'gemini-3.7-flash',
-    'gemini-3.5-flash': 'gemini-3.7-flash',
-    'gemini-3.5-flash-preview': 'gemini-3.7-flash',
-    'claude-opus-5': 'claude-opus-5',
-    'claude-opus-4-8': 'claude-opus-5',
-    'claude-opus-4.8': 'claude-opus-5',
+    'gpt-6.1-sol': 'gpt-6.1-sol',
+    'gpt-5.6-terra': 'gpt-6.1-sol',
+    'gpt-5.6-Terra': 'gpt-6.1-sol',
+    'gpt-5.4': 'gpt-6.1-sol',
+    'gpt-5.4-mini': 'gpt-6.1-sol',
+    'deepseek-flash': 'deepseek-flash',
+    'deepseek-v4-flash': 'deepseek-flash',
+    'DeepSeek-V4-Flash': 'deepseek-flash',
+    'DeepSeek-V4-Flash-0731': 'deepseek-flash',
+    'deepseek-v4-pro': 'deepseek-flash',
+    'DeepSeek-V4-Pro': 'deepseek-flash',
+    'grok-4.7': 'grok-4.7',
+    'grok-4.5': 'grok-4.7',
+    'grok-4.3': 'grok-4.7',
+    'gemini-3.8-flash': 'gemini-3.8-flash',
+    'gemini-3.7-flash': 'gemini-3.8-flash',
+    'gemini-3.6-flash': 'gemini-3.8-flash',
+    'gemini-3.5-flash': 'gemini-3.8-flash',
+    'gemini-3.5-flash-preview': 'gemini-3.8-flash',
+    'claude-opus-5-5': 'claude-opus-5-5',
+    'claude-opus-5': 'claude-opus-5-5',
+    'claude-opus-4-8': 'claude-opus-5-5',
+    'claude-opus-4.8': 'claude-opus-5-5',
   };
   if (aliases[key]) return aliases[key];
   const provider = resolveModelProvider(key);
-  if (provider === 'openai') return 'gpt-5.6-terra';
-  if (provider === 'deepseek') return 'deepseek-v4-flash';
-  if (provider === 'xai') return 'grok-4.5';
-  if (provider === 'gemini') return 'gemini-3.7-flash';
+  if (provider === 'openai') return 'gpt-6.1-sol';
+  if (provider === 'deepseek') return 'deepseek-flash';
+  if (provider === 'xai') return 'grok-4.7';
+  if (provider === 'gemini') return 'gemini-3.8-flash';
   return key;
 }
 

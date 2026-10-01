@@ -456,7 +456,7 @@ ${optionsBlock}
 ${optionsBlock}
 **Data Quality**:
 - Futures Fresh: ${flags.futuresFresh ? '✓' : '✗'} (latest bar within one bar interval)
-- Spot Fresh: ${flags.spotFresh ? '✓' : '✗'} (latest bar within one bar interval)
+- Spot Fresh: ${flags.spotFresh ? '✓' : '✗'} (latest spot price bar within one interval${flags.spotFlowRatio3 == null ? '; spot taker flow is not in this feed — N/A above is missing data, not a balanced tape' : ''})
 - Near Funding Roll: ${flags.nearFundingRoll ? '✓' : '✗'} (first 30min after 00/08/16 UTC)
 
 **Regime Context**:
@@ -505,7 +505,7 @@ disagree with the composite scores and with other analysts.
 ${hasListedOptions
     ? `2. Listed options / daily structure support upside (call tilt or bullish stack — see EQUITY/METALS OPTIONS + DAILY STRUCTURE; venue OI is NOT a requirement)`
     : `2. dollar_open_interest_close ↑ ≥ 1% (vs 3 bars ago) → oiUp1: ${flags.oiUp1 ? '✓' : '✗'}`}
-3. premium ≥ +10 bps OR spot buy > sell → premPos: ${flags.premPos ? '✓' : '✗'}, spotBuyStrong: ${flags.spotBuyStrong ? '✓' : '✗'}
+3. premium ≥ +5 bps (the flag; stronger confluence is ≥ +10) OR spot buy > sell → premPos: ${flags.premPos ? '✓' : '✗'}, spotBuyStrong: ${flags.spotBuyStrong ? '✓' : '✗'}
 ${longOptionsRule}
 
 **SHORT BIAS** (textbook short) if ALL:
@@ -513,7 +513,7 @@ ${longOptionsRule}
 ${hasListedOptions
     ? `2. Listed options / daily structure support downside (put skew/tilt or bearish stack — see EQUITY/METALS OPTIONS + DAILY STRUCTURE; venue OI is NOT a requirement)`
     : `2. dollar_open_interest_close ↑ ≥ 1% → oiUp1: ${flags.oiUp1 ? '✓' : '✗'}`}
-3. premium ≤ −10 bps OR spot sell > buy → premNeg: ${flags.premNeg ? '✓' : '✗'}, spotSellStrong: ${flags.spotSellStrong ? '✓' : '✗'}
+3. premium ≤ −5 bps (the flag; stronger confluence is ≤ −10) OR spot sell > buy → premNeg: ${flags.premNeg ? '✓' : '✗'}, spotSellStrong: ${flags.spotSellStrong ? '✓' : '✗'}
 ${shortOptionsRule}
 
 **FADE SQUEEZE SETUP** (smaller size, tight stop):
@@ -564,6 +564,7 @@ ${probesEnabled ? `   - Conviction ${probeFloor}-${minConviction - 1}: size = 0.
 4. **Data Quality Override**: 
    - If futuresFresh = ✗ or spotFresh = ✗ → size = 0.2 regardless of conviction
    - If nearFundingRoll = ✓ and conviction < 70 → downgrade size by one band (0.8→0.6→0.4→0.2)
+   - If Flow Ratio (3-bar) is N/A, futures taker flow is missing. That is not a balanced tape. Do not open a 0.1 probe. Return FLAT unless OI and premium — the signals actually present — agree on one side at the normal conviction gate. Funding, narratives, and whale positioning alone are not that agreement.
 5. **Session Guard**:
    - Enforced conviction gate for this decision: **≥ ${minConviction}** (probe tier from ${probeFloor}).
 ${thinHours
@@ -573,8 +574,8 @@ ${thinHours
       : `   - When US session is closed, default size is halved; prefer patience and explain when you stay FLAT.`}
 6. **Chop Guard**:
 ${activeEntry && !thinHours
-    ? `   - If chopRisk = ✓ OR volatilityState = LOW and |LongScore−ShortScore| < 10 → cap size at 0.2 and prefer the PROBE tier over FLAT when a side is even mildly better. Cite chop conditions in reasoning.`
-    : `   - If chopRisk = ✓ OR volatilityState = LOW and |LongScore−ShortScore| < 10 → you may choose **FLAT** (size 0) or minimum size 0.2. Explicitly cite chop conditions in reasoning.`}
+    ? `   - If chopRisk = ✓ OR (volatilityState = LOW and |LongScore−ShortScore| < 10) → cap size at 0.2. A probe is allowed only when taker flow is present and one side is clearly better. If Flow Ratio is N/A, this is not a probe — rule 4 still says FLAT unless OI and premium agree. chopRisk = No does not by itself cancel the low-vol size cap.`
+    : `   - If chopRisk = ✓ OR (volatilityState = LOW and |LongScore−ShortScore| < 10) → you may choose **FLAT** (size 0) or minimum size 0.2. If Flow Ratio is N/A, choose FLAT unless OI and premium agree (rule 4). Cite the low-vol or chop flag you actually have.`}
    - Do NOT recommend flips during chop unless trendConsistency ≥ 60% and volatility ≠ LOW.${extensionRules}
 ${tieBreakers}
 8. Stop = session range (H−L) based, not fixed %
@@ -595,7 +596,7 @@ cycle — your horizon is "until stop, target, or thesis invalidation", not a
 fixed clock.
 
 **IMPORTANT**: 
-- Choose LONG or SHORT when conviction ≥ ${minConviction}% and signals align. With conviction ${probeFloor}-${minConviction - 1}% and one side clearly better, prefer a 0.1-size PROBE over FLAT. Return **FLAT** (no trade) when conviction < ${probeFloor}%, signals genuinely conflict, or **Chop Guard** conditions are met (volatility = LOW or chopRisk = YES AND edge < 10) — and explain why you're sidelined.
+- Choose LONG or SHORT when conviction ≥ ${minConviction}% and signals align. With conviction ${probeFloor}-${minConviction - 1}% and one side clearly better, prefer a 0.1-size PROBE over FLAT${flags.flowRatio3 == null ? ' — except when Flow Ratio is N/A: missing taker flow cancels the probe; return FLAT unless OI and premium agree at the normal gate' : ''}. Return **FLAT** (no trade) when conviction < ${probeFloor}%, signals genuinely conflict, or chopRisk is on and |LongScore−ShortScore| < 10. Low volatility alone is the size cap in rule 6, not an automatic FLAT${flags.flowRatio3 == null ? ', and missing flow still overrides that' : ''}.
 - LONG/SHORT = Open position with stop-loss and take-profit
 - FLAT = No order; set size to 0 and reuse current price for entry/stop/take-profit (they will be ignored but must be valid numbers)
 ${

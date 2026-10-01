@@ -321,7 +321,17 @@ export function computeScalperFlags(
     }
     return NaN
   }))
-  const frBps = (fLast?.funding_rate ?? NaN) * 10_000
+  const frRaw = (() => {
+    // The forming bar often has no funding print yet. Use the latest rate
+    // within a few bars so a live check does not go N/A an hour after open.
+    const start = Math.max(0, fut.length - 4)
+    for (let i = fut.length - 1; i >= start; i -= 1) {
+      const n = Number(fut[i]?.funding_rate)
+      if (Number.isFinite(n)) return n
+    }
+    return NaN
+  })()
+  const frBps = frRaw * 10_000
 
   // Liq percentiles
   const sellLiqHist = fHist.map(b => b.sell_liquidations_dollar_volume ?? 0)
@@ -525,39 +535,61 @@ export function computeCompositeScore(flags: ScalperFlags): CompositeScore {
   // is gone: gamma_dollars was never populated (Deribit gives us DVOL only),
   // so it sat permanently neutral — fake precision. Weight redistributed to
   // the signals that actually move.
-  const w = {
-    flow: 0.30, oi: 0.30, premium: 0.20, iv: 0.1, spot: 0.1
+  //
+  // A missing leg is left out and the rest are renormalized. Filling flow with
+  // ratio 1.0 (or spot with a permanent 0.5) made an empty CoinAnk tape look
+  // like a small real edge. When every leg is present — the normal CoinGlass
+  // bar — the weights are still 30/30/20/10/10 and the score matches the old
+  // formula. Unknown IV stays a neutral 0.1 so alts without Deribit do not jump.
+  const parts: { w: number; long: number; short: number }[] = []
+
+  // Flow (capped at 1.8x / 0.55x). Null = feed missing, not a balanced tape.
+  let flowLong = 0
+  let flowShort = 0
+  if (flags.flowRatio3 != null && Number.isFinite(flags.flowRatio3)) {
+    const fr = flags.flowRatio3
+    flowLong = clamp((fr - 1) / (1.8 - 1), 0, 1)
+    flowShort = clamp((1 - fr) / (1 - 0.55), 0, 1)
+    parts.push({ w: 0.30, long: flowLong, short: flowShort })
   }
 
-  // Flow (capped at 1.8x / 0.55x)
-  const fr = flags.flowRatio3 ?? 1
-  const flowLong = clamp((fr - 1) / (1.8 - 1), 0, 1)
-  const flowShort = clamp((1 - fr) / (1 - 0.55), 0, 1)
-
   // OI
-  const oiUp = Math.max(0, (flags.oiDeltaPct3 ?? 0) / 2) // 2% maps to 1.0 (cap later)
-  const oiLong = clamp(oiUp, 0, 1)
-  const oiShort = clamp(Math.max(0, -((flags.oiDeltaPct3 ?? 0) / 2)), 0, 1)
+  let oiLong = 0
+  let oiShort = 0
+  if (flags.oiDeltaPct3 != null && Number.isFinite(flags.oiDeltaPct3)) {
+    const oiUp = Math.max(0, flags.oiDeltaPct3 / 2) // 2% maps to 1.0 (cap later)
+    oiLong = clamp(oiUp, 0, 1)
+    oiShort = clamp(Math.max(0, -(flags.oiDeltaPct3 / 2)), 0, 1)
+    parts.push({ w: 0.30, long: oiLong, short: oiShort })
+  }
 
   // Premium (bps): + is long-friendly, − is short-friendly
-  const pb = flags.premiumBps ?? 0
-  const premLong = clamp((pb - 0) / 15, 0, 1) // +15bps ~ 1.0
-  const premShort = clamp((0 - pb) / 15, 0, 1)
+  let premLong = 0
+  let premShort = 0
+  if (flags.premiumBps != null && Number.isFinite(flags.premiumBps)) {
+    premLong = clamp(flags.premiumBps / 15, 0, 1) // +15bps ~ 1.0
+    premShort = clamp(-flags.premiumBps / 15, 0, 1)
+    parts.push({ w: 0.20, long: premLong, short: premShort })
+  }
 
-  // IV regime
+  // IV regime. Missing DVOL (most alts) stays the historical neutral 0.5.
   const ivLong = flags.ivCompressing ? 1 : flags.ivExpanding ? 0 : 0.5
   const ivShort = flags.ivExpanding ? 1 : flags.ivCompressing ? 0 : 0.5
+  parts.push({ w: 0.1, long: ivLong, short: ivShort })
 
-  // Spot confirm
-  const spotLong = flags.spotBuyStrong ? 1 : flags.spotSellStrong ? 0 : 0.5
-  const spotShort = flags.spotSellStrong ? 1 : flags.spotBuyStrong ? 0 : 0.5
+  // Spot confirm. Null spot-flow ratio means the feed has no taker print
+  // (CoinAnk Plan 2, or a CoinGlass spot outage) — do not score it as 0.5.
+  let spotLong = 0
+  let spotShort = 0
+  if (flags.spotFlowRatio3 != null && Number.isFinite(flags.spotFlowRatio3)) {
+    spotLong = flags.spotBuyStrong ? 1 : flags.spotSellStrong ? 0 : 0.5
+    spotShort = flags.spotSellStrong ? 1 : flags.spotBuyStrong ? 0 : 0.5
+    parts.push({ w: 0.1, long: spotLong, short: spotShort })
+  }
 
-  let longScore = Math.round(100 * (
-    w.flow*flowLong + w.oi*oiLong + w.premium*premLong + w.iv*ivLong + w.spot*spotLong
-  ))
-  let shortScore = Math.round(100 * (
-    w.flow*flowShort + w.oi*oiShort + w.premium*premShort + w.iv*ivShort + w.spot*spotShort
-  ))
+  const wSum = parts.reduce((sum, p) => sum + p.w, 0) || 1
+  let longScore = Math.round(100 * parts.reduce((sum, p) => sum + (p.w / wSum) * p.long, 0))
+  let shortScore = Math.round(100 * parts.reduce((sum, p) => sum + (p.w / wSum) * p.short, 0))
 
   if (flags.chopRisk) {
     longScore = Math.round(longScore * 0.7)

@@ -15,6 +15,22 @@ import { getEmaContext } from './emaList.js';
 import { getCoinankRsiContext } from './coinank.js';
 import { getRsiContext } from './rsiList.js';
 
+function ordinal(n: number): string {
+  const v = Math.round(n);
+  const mod100 = v % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `${v}th`;
+  switch (v % 10) {
+    case 1:
+      return `${v}st`;
+    case 2:
+      return `${v}nd`;
+    case 3:
+      return `${v}rd`;
+    default:
+      return `${v}th`;
+  }
+}
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LOOKBACK_MS = 5 * DAY_MS;
 const RUNUP_MS = 3 * DAY_MS;
@@ -126,7 +142,15 @@ function computeLocalStretch(bars: FuturesBar[]): {
       ? ((high5d - lastClose) / high5d) * 100
       : null;
 
-  const fundingNow = Number(last.funding_rate);
+  let fundingSrc = NaN
+  for (let i = sorted.length - 1; i >= 0 && i >= sorted.length - 4; i -= 1) {
+    const r = Number(sorted[i]?.funding_rate)
+    if (Number.isFinite(r)) {
+      fundingSrc = r
+      break
+    }
+  }
+  const fundingNow = fundingSrc;
   const fundingHist = win
     .map((b) => Number(b.funding_rate))
     .filter((n) => Number.isFinite(n));
@@ -333,7 +357,7 @@ export function renderCryptoExtensionSection(
   ].join(' · ');
 
   const runPctl =
-    ctx.runUp3dPctl != null ? `${Math.round(ctx.runUp3dPctl)}th pctl of 5d` : 'N/A pctl';
+    ctx.runUp3dPctl != null ? `${ordinal(ctx.runUp3dPctl)} pctl of 5d` : 'N/A pctl';
   const offHigh =
     ctx.off5dHighPct != null ? `${fmtN(ctx.off5dHighPct)}% off 5d high` : 'N/A off high';
 
@@ -342,7 +366,7 @@ export function renderCryptoExtensionSection(
   else if (ctx.fundingCrowdedShort) fundingNote = ' — crowded shorts';
 
   const fundPctl =
-    ctx.fundingPctl != null ? `${Math.round(ctx.fundingPctl)}th pctl 5d` : 'N/A pctl';
+    ctx.fundingPctl != null ? `${ordinal(ctx.fundingPctl)} pctl 5d` : 'N/A pctl';
 
   return `
 
@@ -350,7 +374,7 @@ export function renderCryptoExtensionSection(
 - RSI: ${rsiBits}
 - Price vs EMAs: ${emaBits}
 - Run-up: ${fmtPct(ctx.runUp3dPct)} in 3d (${runPctl}) · ${offHigh}
-- Funding: ${fmtN(ctx.fundingBps, 2)} bps (${fundPctl}${fundingNote})${ctx.oiPctl != null ? ` · OI ${Math.round(ctx.oiPctl)}th pctl 5d` : ''}
+- Funding: ${fmtN(ctx.fundingBps, 2)} bps (${fundPctl}${fundingNote})${ctx.oiPctl != null ? ` · OI ${ordinal(ctx.oiPctl)} pctl 5d` : ''}
 - Read: stretched + supply catalyst (UNLOCK/TOKENOMICS) or crowded funding = late-chase / trim-into-strength zone. Oversold + intact thesis = noise / DCA zone. **Never short a pump on RSI alone.**`;
 }
 

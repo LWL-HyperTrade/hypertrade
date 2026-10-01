@@ -236,42 +236,47 @@ def _normalize_house_model(provider: str, model: str) -> str:
 
     if p == "openai":
         aliases = {
-            "gpt-5.6-terra": "gpt-5.6-terra",
-            "gpt-5.6-Terra": "gpt-5.6-terra",
-            "gpt-5.4": "gpt-5.6-terra",
-            "gpt-5.4-mini": "gpt-5.6-terra",
+            "gpt-6.1-sol": "gpt-6.1-sol",
+            "gpt-5.6-terra": "gpt-6.1-sol",
+            "gpt-5.6-Terra": "gpt-6.1-sol",
+            "gpt-5.4": "gpt-6.1-sol",
+            "gpt-5.4-mini": "gpt-6.1-sol",
         }
-        return aliases.get(key, "gpt-5.6-terra")
+        return aliases.get(key, "gpt-6.1-sol")
     if p == "deepseek":
         aliases = {
-            "deepseek-v4-flash": "deepseek-v4-flash",
-            "DeepSeek-V4-Flash": "deepseek-v4-flash",
-            "DeepSeek-V4-Flash-0731": "deepseek-v4-flash",
-            "deepseek-v4-pro": "deepseek-v4-flash",
-            "DeepSeek-V4-Pro": "deepseek-v4-flash",
+            "deepseek-flash": "deepseek-flash",
+            "deepseek-v4-flash": "deepseek-flash",
+            "DeepSeek-V4-Flash": "deepseek-flash",
+            "DeepSeek-V4-Flash-0731": "deepseek-flash",
+            "deepseek-v4-pro": "deepseek-flash",
+            "DeepSeek-V4-Pro": "deepseek-flash",
         }
-        return aliases.get(key, "deepseek-v4-flash")
+        return aliases.get(key, "deepseek-flash")
     if p == "xai":
         aliases = {
-            "grok-4.5": "grok-4.5",
-            "grok-4.3": "grok-4.5",
+            "grok-4.7": "grok-4.7",
+            "grok-4.5": "grok-4.7",
+            "grok-4.3": "grok-4.7",
         }
-        return aliases.get(key, "grok-4.5")
+        return aliases.get(key, "grok-4.7")
     if p == "gemini":
         aliases = {
-            "gemini-3.7-flash": "gemini-3.7-flash",
-            "gemini-3.6-flash": "gemini-3.7-flash",
-            "gemini-3.5-flash": "gemini-3.7-flash",
-            "gemini-3.5-flash-preview": "gemini-3.7-flash",
+            "gemini-3.8-flash": "gemini-3.8-flash",
+            "gemini-3.7-flash": "gemini-3.8-flash",
+            "gemini-3.6-flash": "gemini-3.8-flash",
+            "gemini-3.5-flash": "gemini-3.8-flash",
+            "gemini-3.5-flash-preview": "gemini-3.8-flash",
         }
-        return aliases.get(key, "gemini-3.7-flash")
+        return aliases.get(key, "gemini-3.8-flash")
     if p == "claude":
         aliases = {
-            "claude-opus-5": "claude-opus-5",
-            "claude-opus-4-8": "claude-opus-5",
-            "claude-opus-4.8": "claude-opus-5",
+            "claude-opus-5-5": "claude-opus-5-5",
+            "claude-opus-5": "claude-opus-5-5",
+            "claude-opus-4-8": "claude-opus-5-5",
+            "claude-opus-4.8": "claude-opus-5-5",
         }
-        return aliases.get(key, key if key.startswith("claude-") else "claude-opus-5")
+        return aliases.get(key, key if key.startswith("claude-") else "claude-opus-5-5")
     return key
 
 
