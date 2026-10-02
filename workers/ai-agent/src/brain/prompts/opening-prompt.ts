@@ -7,6 +7,7 @@
  */
 
 import type { ScalperFlags, CompositeScore } from '../computeScalperFlags.js';
+import { takerFlowInFeed } from '../takerFlow.js';
 import type { StopPlan } from '../computeStops.js';
 import type { SessionContext } from '../session-context.js';
 import {
@@ -164,6 +165,9 @@ export function buildOpeningPrompt(input: OpeningPromptInput): string {
   const activeEntry = riskProfile === 'aggressive';
   const crypto = isCryptoAsset(asset);
   const hip3 = isHip3Symbol(asset);
+  /** False for the whole CoinAnk feed. True on CoinGlass, even if one bar lacks flow. */
+  const flowInFeed = takerFlowInFeed();
+  const flowMissing = flowInFeed && flags.flowRatio3 == null;
   const aClass = assetClassOf(asset);
   const xyzSession = hip3 ? getXyzSessionContext(asset) : null;
   const thinHours = crypto ? sessionContext.isWeekend : xyzSession?.pricingMode !== 'external';
@@ -259,11 +263,11 @@ export function buildOpeningPrompt(input: OpeningPromptInput): string {
       ? `
 
 **ENTRY APPETITE** (default):
-- Listed options, the daily stack, and macro are the tape. Missing venue flow, open interest, or premium is expected on this contract. Do not stay FLAT because they are N/A, and do not wait for them to agree.
+- Listed options, the daily stack, and macro are the tape.${flowInFeed ? ' Missing venue flow, open interest, or premium is expected on this contract. Do not stay FLAT because they are N/A, and do not wait for them to agree.' : ''}
 - A small position is allowed when options skew / put-call and the daily stack point the same way. Conflicting options, or an expiry inside a couple of days, is a real reason to wait.
 - Guards below modulate SIZE first — they are not standing instructions to stay out.
 - Risk discipline is unchanged: size bands, stops, and take-profits stay the same. More positions when there is edge — not bigger ones.`
-      : activeEntry && flags.flowRatio3 == null
+      : activeEntry && flowMissing
         ? `
 
 **ENTRY APPETITE** (default):
@@ -350,7 +354,7 @@ export function buildOpeningPrompt(input: OpeningPromptInput): string {
       ? `4. Equity options: ATM IV stable/falling with call-tilted flow supports LONG continuation (see EQUITY OPTIONS)`
       : hasMetalsOptions
         ? `4. Metals options + DXY: GLD/SLV call-tilted flow with soft/falling DXY supports LONG continuation (see METALS OPTIONS + MACRO BETA)`
-        : `4. Options: skipped for ${displayAsset} (BTC/ETH only) — judge LONG on rules 1–3 alone`;
+        : `4. Options: skipped for ${displayAsset} (BTC/ETH only) — judge LONG on the rules above`;
 
   const shortOptionsRule = optionsInScope
     ? `4. BTC/ETH IV: dvol_close > dvol_open (expansion favors breakdown continuation) → ivExpanding: ${flags.ivExpanding ? '✓' : '✗'}`
@@ -358,37 +362,52 @@ export function buildOpeningPrompt(input: OpeningPromptInput): string {
       ? `4. Equity options: ATM IV rising with put-tilted flow supports SHORT continuation (see EQUITY OPTIONS)`
       : hasMetalsOptions
         ? `4. Metals options + DXY: GLD/SLV put-tilted flow and/or rising DXY supports SHORT continuation (see METALS OPTIONS + MACRO BETA)`
-        : `4. Options: skipped for ${displayAsset} (BTC/ETH only) — judge SHORT on rules 1–3 alone`;
+        : `4. Options: skipped for ${displayAsset} (BTC/ETH only) — judge SHORT on the rules above`;
 
   const citeMetrics = optionsInScope
-    ? 'OI Δ%, flow ratio, premium bps, IV delta, and regime (volatility/chop)'
+    ? flowInFeed
+      ? 'OI Δ%, flow ratio, premium bps, IV delta, and regime (volatility/chop)'
+      : 'OI Δ%, premium bps, IV delta, and regime (volatility/chop)'
     : hasEquityOptions
-      ? 'equity ATM IV / skew / put-call FIRST, then (secondary) premium/funding, brief flow, regime'
+      ? 'equity ATM IV / skew / put-call FIRST, then daily structure, macro, regime'
       : hasMetalsOptions
-        ? 'GLD/SLV ATM IV / put-call + DXY FIRST, then metal EMAs, then (secondary) premium/funding/regime'
-        : 'OI Δ%, flow ratio, premium bps, and regime (volatility/chop) — never cite IV/options';
+        ? 'GLD/SLV ATM IV / put-call + DXY FIRST, then metal EMAs, then premium/regime'
+        : flowInFeed
+          ? 'OI Δ%, flow ratio, premium bps, and regime (volatility/chop) — never cite IV/options'
+          : 'OI Δ%, premium bps, and regime (volatility/chop) — never cite IV/options';
 
   const tieBreakers = optionsInScope
-    ? `7. **Tie-breakers** (when |LongScore−ShortScore| < 5):
+    ? flowInFeed
+      ? `7. **Tie-breakers** (when |LongScore−ShortScore| < 5):
    - Premium sign (±≥5bps) → OI Δ% sign → spot flow (sfr3) → IV regime → flow agreement (FR3 & SFR3 same sign)
    - If still tied after IV, pick the side where FR3 and SFR3 point the same way`
+      : `7. **Tie-breakers** (when |LongScore−ShortScore| < 5):
+   - Premium sign (±≥5bps) → OI Δ% sign → IV regime`
     : hasEquityOptions
       ? `7. **Tie-breakers** (when |LongScore−ShortScore| < 5):
-   - Equity options (skew / put-call premium) → daily stack → premium sign (±≥5bps) → brief flow
+   - Equity options (skew / put-call premium) → daily stack → premium sign (±≥5bps)
 `
       : hasMetalsOptions
         ? `7. **Tie-breakers** (when |LongScore−ShortScore| < 5):
    - GLD/SLV put/call premium tilt → DXY stack → metal EMA/daily stack → premium
 `
-        : `7. **Tie-breakers** (when |LongScore−ShortScore| < 5):
+        : flowInFeed
+          ? `7. **Tie-breakers** (when |LongScore−ShortScore| < 5):
    - Premium sign (±≥5bps) → OI Δ% sign → spot flow (sfr3) → flow agreement (FR3 & SFR3 same sign)
+   - Do not use IV/options (out of scope for ${displayAsset})`
+          : `7. **Tie-breakers** (when |LongScore−ShortScore| < 5):
+   - Premium sign (±≥5bps) → OI Δ% sign
    - Do not use IV/options (out of scope for ${displayAsset})`;
 
   const sizingNote = optionsInScope
-    ? 'Score = z-score of (buy−sell $), OI Δ%, |premium| bps, IV regime.'
+    ? flowInFeed
+      ? 'Score = z-score of (buy−sell $), OI Δ%, |premium| bps, IV regime.'
+      : 'Score = z-score of OI Δ%, |premium| bps, IV regime.'
     : hasListedOptions
-      ? 'Score = z-score of (buy−sell $), OI Δ%, |premium| bps (listed options temper size).'
-      : 'Score = z-score of (buy−sell $), OI Δ%, |premium| bps (options out of scope).';
+      ? 'Listed options and the daily stack set the side.'
+      : flowInFeed
+        ? 'Score = z-score of (buy−sell $), OI Δ%, |premium| bps (options out of scope).'
+        : 'Score = z-score of OI Δ% and |premium| bps (options out of scope).';
 
   const convictionScope = optionsInScope
     ? 'regime, session, liquidations, options, institutional flows'
@@ -423,12 +442,14 @@ export function buildOpeningPrompt(input: OpeningPromptInput): string {
 - Opp cluster sell/buy: ${flags.liqOppClusterSell ? '✓' : '✗'} / ${flags.liqOppClusterBuy ? '✓' : '✗'}`;
   const microBlock = isEquityAsset || isMetalsAsset
     ? `**VENUE MICRO** (secondary — this HL/tradeXYZ contract only; ${microWeightHint}; omit thin venue OI from reasoning — never narrate that it is "N/A"/"out of scope"):
-
+${flowInFeed
+  ? `
 **Flow** (brief):
 ${flags.flowRatio3 == null
   ? `- Not in this feed. Missing flow is not a balanced tape and not a failed buy/sell flag. Do not use it.`
   : `- Flow Ratio (3-bar): ${flags.flowRatio3.toFixed(2)} (buy/sell) | Buy strong: ${flags.flowBuyStrong ? '✓' : '✗'} | Sell strong: ${flags.flowSellStrong ? '✓' : '✗'}`}
-
+`
+  : ''}
 **Premium & Funding**:
 ${flags.premiumBps == null && flags.fundingRateBps == null
   ? `- Not in this feed. Do not require premium or funding, and do not treat a funding-roll clock as a size cut.`
@@ -441,7 +462,8 @@ ${optionsBlock}
 
 **Regime**: **${flags.regimeTag ? flags.regimeTag.toUpperCase() : 'N/A'}** | Bias: **${flags.regimeBias ? flags.regimeBias.toUpperCase() : 'N/A'}** | Vol: ${flags.volatilityState ? flags.volatilityState.toUpperCase() : 'N/A'} | Chop: ${flags.chopRisk ? '⚠️ YES' : 'No'}`
     : `**MICROSTRUCTURE FLAGS** (from ${input.barIntervalLabel ?? '1h'} bars over the last ~5 days; "3-bar" = ${3 * hp.flagWindowScale} hours${windowNote}):
-
+${flowInFeed
+  ? `
 **Flow Metrics**:
 - Flow Ratio (3-bar): ${flags.flowRatio3?.toFixed(2) || 'N/A'} (buy/sell)
 - Flow Ratio (5-bar): ${flags.flowRatio5?.toFixed(2) || 'N/A'}
@@ -455,7 +477,8 @@ ${optionsBlock}
 - Futures net taker delta: ${flags.cvdNet24Usd != null ? fmtUsd(flags.cvdNet24Usd) : 'N/A'} | Spot: ${flags.spotCvdNet24Usd != null ? fmtUsd(flags.spotCvdNet24Usd) : 'N/A'}${flags.cvdNet24Usd != null && flags.spotCvdNet24Usd != null ? (Math.sign(flags.cvdNet24Usd) === Math.sign(flags.spotCvdNet24Usd) ? ' (spot CONFIRMS — real demand)' : ' (perp-led, spot disagrees — fragile/squeeze-prone)') : ''}
 - One-sidedness (12-bar): ${flags.cvdPersistence12 != null ? `${Math.round(flags.cvdPersistence12 * 100)}%${flags.cvdPersistence12 >= 0.75 ? ' (persistent)' : ' (choppy)'}` : 'N/A'}
 - Divergence: ${flags.cvdDivergence === 'bearish' ? '🔴 BEARISH — price higher high, CVD lower high (absorption: do NOT chase longs)' : flags.cvdDivergence === 'bullish' ? '🟢 BULLISH — price lower low, CVD higher low (accumulation: do NOT chase shorts)' : flags.cvdDivergence === 'none' ? 'None' : 'N/A'}
-
+`
+  : ''}
 **Open Interest**:
 - OI Δ% (3-bar): ${flags.oiDeltaPct3?.toFixed(2) || 'N/A'}%
 - OI Up ≥1%: ${flags.oiUp1 ? '✓' : '✗'}
@@ -478,7 +501,7 @@ ${optionsBlock}
 ${optionsBlock}
 **Data Quality**:
 - Futures Fresh: ${flags.futuresFresh ? '✓' : '✗'} (latest bar within one bar interval)
-- Spot Fresh: ${flags.spotFresh ? '✓' : '✗'} (latest spot price bar within one interval${flags.spotFlowRatio3 == null ? '; spot taker flow is not in this feed — N/A above is missing data, not a balanced tape' : ''})
+- Spot Fresh: ${flags.spotFresh ? '✓' : '✗'} (latest spot price bar within one interval${flowInFeed && flags.spotFlowRatio3 == null ? '; spot taker flow is not in this feed — N/A above is missing data, not a balanced tape' : ''})
 - Near Funding Roll: ${flags.nearFundingRoll ? '✓' : '✗'} (first 30min after 00/08/16 UTC)
 
 **Regime Context**:
@@ -527,21 +550,25 @@ disagree with the composite scores and with other analysts.
 **LONG BIAS** (textbook long) if ALL:
 ${hasListedOptions
   ? `1. Listed options support upside: call-tilted put/call, or skew that is not steeply put-favoring (see EQUITY/METALS OPTIONS). This is the lead condition.
-2. Daily structure agrees (bullish EMA stack, or price holding above the nearer daily EMAs — see DAILY STRUCTURE).
-3. Venue flow and premium only count when they are actually in the feed. If they are missing, this setup does not fail.`
-  : `1. flowRatio3 ≥ 1.20 AND flowRatio5 ≥ 1.10 AND 3-bar dollar_volume ≥ 30th pct of last 60 bars → flowBuyStrong: ${flags.flowBuyStrong ? '✓' : '✗'}, FR5: ${flags.flowRatio5?.toFixed(2) || 'N/A'}
+2. Daily structure agrees (bullish EMA stack, or price holding above the nearer daily EMAs — see DAILY STRUCTURE).`
+  : flowInFeed
+    ? `1. flowRatio3 ≥ 1.20 AND flowRatio5 ≥ 1.10 AND 3-bar dollar_volume ≥ 30th pct of last 60 bars → flowBuyStrong: ${flags.flowBuyStrong ? '✓' : '✗'}, FR5: ${flags.flowRatio5?.toFixed(2) || 'N/A'}
 2. dollar_open_interest_close ↑ ≥ 1% (vs 3 bars ago) → oiUp1: ${flags.oiUp1 ? '✓' : '✗'}
-3. premium ≥ +5 bps (the flag; stronger confluence is ≥ +10) OR spot buy > sell → premPos: ${flags.premPos ? '✓' : '✗'}, spotBuyStrong: ${flags.spotBuyStrong ? '✓' : '✗'}`}
+3. premium ≥ +5 bps (the flag; stronger confluence is ≥ +10) OR spot buy > sell → premPos: ${flags.premPos ? '✓' : '✗'}, spotBuyStrong: ${flags.spotBuyStrong ? '✓' : '✗'}`
+    : `1. dollar_open_interest_close ↑ ≥ 1% (vs 3 bars ago) → oiUp1: ${flags.oiUp1 ? '✓' : '✗'}
+2. premium ≥ +5 bps (the flag; stronger confluence is ≥ +10) → premPos: ${flags.premPos ? '✓' : '✗'}`}
 ${longOptionsRule}
 
 **SHORT BIAS** (textbook short) if ALL:
 ${hasListedOptions
   ? `1. Listed options support downside: put-tilted put/call, or steep put skew (see EQUITY/METALS OPTIONS). This is the lead condition.
-2. Daily structure agrees (bearish stack, or price failing the nearer daily EMAs — see DAILY STRUCTURE).
-3. Venue flow and premium only count when they are actually in the feed. If they are missing, this setup does not fail.`
-  : `1. flowRatio3 ≤ 0.83 AND flowRatio5 ≤ 0.91 AND 3-bar dollar_volume ≥ 30th pct of last 60 bars → flowSellStrong: ${flags.flowSellStrong ? '✓' : '✗'}, FR5: ${flags.flowRatio5?.toFixed(2) || 'N/A'}
+2. Daily structure agrees (bearish stack, or price failing the nearer daily EMAs — see DAILY STRUCTURE).`
+  : flowInFeed
+    ? `1. flowRatio3 ≤ 0.83 AND flowRatio5 ≤ 0.91 AND 3-bar dollar_volume ≥ 30th pct of last 60 bars → flowSellStrong: ${flags.flowSellStrong ? '✓' : '✗'}, FR5: ${flags.flowRatio5?.toFixed(2) || 'N/A'}
 2. dollar_open_interest_close ↑ ≥ 1% → oiUp1: ${flags.oiUp1 ? '✓' : '✗'}
-3. premium ≤ −5 bps (the flag; stronger confluence is ≤ −10) OR spot sell > buy → premNeg: ${flags.premNeg ? '✓' : '✗'}, spotSellStrong: ${flags.spotSellStrong ? '✓' : '✗'}`}
+3. premium ≤ −5 bps (the flag; stronger confluence is ≤ −10) OR spot sell > buy → premNeg: ${flags.premNeg ? '✓' : '✗'}, spotSellStrong: ${flags.spotSellStrong ? '✓' : '✗'}`
+    : `1. dollar_open_interest_close ↑ ≥ 1% → oiUp1: ${flags.oiUp1 ? '✓' : '✗'}
+2. premium ≤ −5 bps (the flag; stronger confluence is ≤ −10) → premNeg: ${flags.premNeg ? '✓' : '✗'}`}
 ${shortOptionsRule}
 
 **FADE SQUEEZE SETUP** (smaller size, tight stop):
@@ -549,7 +576,7 @@ ${shortOptionsRule}
 - Short wipe: buy_liquidations ≥ 90th pct → liqBuy90: ${flags.liqBuy90 ? '✓' : '✗'}
 
 **SIZING**:
-Base size × flow-strength score, capped at 2×.
+${flowInFeed ? 'Base size × flow-strength score, capped at 2×.' : 'Size from the conviction bands below.'}
 ${sizingNote}
 
 **CRITICAL RULES**:
@@ -591,8 +618,12 @@ ${probesEnabled ? `   - Conviction ${probeFloor}-${minConviction - 1}: size = 0.
    - Conviction ≥ 70: size = 0.8 (maximum)
 4. **Data Quality Override**: 
    - If futuresFresh = ✗${hip3 ? '' : ' or spotFresh = ✗'} → size = 0.2 regardless of conviction
-   ${hip3 ? '- Venue flow, open interest, and premium may be N/A. That is not a data-quality failure and not a reason to stay FLAT. Decide from listed options, daily structure, and macro.' : `- If nearFundingRoll = ✓ and conviction < 70 → downgrade size by one band (0.8→0.6→0.4→0.2)
-   - If Flow Ratio (3-bar) is N/A, futures taker flow is missing. That is not a balanced tape. Do not open a 0.1 probe. Return FLAT unless OI and premium — the signals actually present — agree on one side at the normal conviction gate. Funding, narratives, and whale positioning alone are not that agreement.`}
+   ${hip3
+     ? '- Decide from listed options, daily structure, and macro.'
+     : flowMissing
+       ? `- If nearFundingRoll = ✓ and conviction < 70 → downgrade size by one band (0.8→0.6→0.4→0.2)
+   - If Flow Ratio (3-bar) is N/A, futures taker flow is missing. That is not a balanced tape. Do not open a 0.1 probe. Return FLAT unless OI and premium — the signals actually present — agree on one side at the normal conviction gate. Funding, narratives, and whale positioning alone are not that agreement.`
+       : `- If nearFundingRoll = ✓ and conviction < 70 → downgrade size by one band (0.8→0.6→0.4→0.2)`}
 5. **Session Guard**:
    - Enforced conviction gate for this decision: **≥ ${minConviction}** (probe tier from ${probeFloor}).
 ${thinHours
@@ -604,10 +635,14 @@ ${thinHours
 ${activeEntry && !thinHours
     ? hip3
       ? `   - If chopRisk = ✓ OR volatilityState = LOW → cap size at 0.2. Do not require venue flow. Listed options and the daily stack still decide the side.`
-      : `   - If chopRisk = ✓ OR (volatilityState = LOW and |LongScore−ShortScore| < 10) → cap size at 0.2. A probe is allowed only when taker flow is present and one side is clearly better. If Flow Ratio is N/A, this is not a probe — rule 4 still says FLAT unless OI and premium agree. chopRisk = No does not by itself cancel the low-vol size cap.`
+      : flowMissing
+        ? `   - If chopRisk = ✓ OR (volatilityState = LOW and |LongScore−ShortScore| < 10) → cap size at 0.2. A probe is allowed only when taker flow is present and one side is clearly better. If Flow Ratio is N/A, this is not a probe — rule 4 still says FLAT unless OI and premium agree. chopRisk = No does not by itself cancel the low-vol size cap.`
+        : `   - If chopRisk = ✓ OR (volatilityState = LOW and |LongScore−ShortScore| < 10) → cap size at 0.2. A probe is allowed when one side is clearly better. chopRisk = No does not by itself cancel the low-vol size cap.`
     : hip3
-      ? `   - If chopRisk = ✓ OR volatilityState = LOW → you may choose **FLAT** or minimum size 0.2. Do not cite missing venue flow as the reason.`
-      : `   - If chopRisk = ✓ OR (volatilityState = LOW and |LongScore−ShortScore| < 10) → you may choose **FLAT** (size 0) or minimum size 0.2. If Flow Ratio is N/A, choose FLAT unless OI and premium agree (rule 4). Cite the low-vol or chop flag you actually have.`}
+      ? `   - If chopRisk = ✓ OR volatilityState = LOW → you may choose **FLAT** or minimum size 0.2.`
+      : flowMissing
+        ? `   - If chopRisk = ✓ OR (volatilityState = LOW and |LongScore−ShortScore| < 10) → you may choose **FLAT** (size 0) or minimum size 0.2. If Flow Ratio is N/A, choose FLAT unless OI and premium agree (rule 4). Cite the low-vol or chop flag you actually have.`
+        : `   - If chopRisk = ✓ OR (volatilityState = LOW and |LongScore−ShortScore| < 10) → you may choose **FLAT** (size 0) or minimum size 0.2. Cite the low-vol or chop flag you actually have.`}
    - Do NOT recommend flips during chop unless trendConsistency ≥ 60% and volatility ≠ LOW.${extensionRules}
 ${tieBreakers}
 8. Stop = session range (H−L) based, not fixed %
@@ -628,7 +663,7 @@ cycle — your horizon is "until stop, target, or thesis invalidation", not a
 fixed clock.
 
 **IMPORTANT**: 
-- Choose LONG or SHORT when conviction ≥ ${minConviction}% and signals align. With conviction ${probeFloor}-${minConviction - 1}% and one side clearly better, prefer a 0.1-size PROBE over FLAT${crypto && flags.flowRatio3 == null ? ' — except when Flow Ratio is N/A: missing taker flow cancels the probe; return FLAT unless OI and premium agree at the normal gate' : hip3 ? '. On this HIP-3 contract, listed options and the daily stack are that alignment — missing venue flow does not cancel the probe' : ''}. Return **FLAT** (no trade) when conviction < ${probeFloor}%, signals genuinely conflict, or chopRisk is on and |LongScore−ShortScore| < 10. Low volatility alone is the size cap in rule 6, not an automatic FLAT${crypto && flags.flowRatio3 == null ? ', and missing flow still overrides that' : ''}.
+- Choose LONG or SHORT when conviction ≥ ${minConviction}% and signals align. With conviction ${probeFloor}-${minConviction - 1}% and one side clearly better, prefer a 0.1-size PROBE over FLAT${flowMissing ? ' — except when Flow Ratio is N/A: missing taker flow cancels the probe; return FLAT unless OI and premium agree at the normal gate' : hip3 ? '. On this HIP-3 contract, listed options and the daily stack are that alignment' : ''}. Return **FLAT** (no trade) when conviction < ${probeFloor}%, signals genuinely conflict, or chopRisk is on and |LongScore−ShortScore| < 10. Low volatility alone is the size cap in rule 6, not an automatic FLAT${flowMissing ? ', and missing flow still overrides that' : ''}.
 - LONG/SHORT = Open position with stop-loss and take-profit
 - FLAT = No order; set size to 0 and reuse current price for entry/stop/take-profit (they will be ignored but must be valid numbers)
 ${

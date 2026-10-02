@@ -3,6 +3,7 @@ import { fmtUsd, renderEtfFlowsSection, type EtfFlowsContext } from '../../data/
 import { renderHlPositioningSection, type HlPositioningContext } from '../../data/hlPositioning.js';
 import { renderWhaleSection, type WhalePos } from '../../data/hlWhales.js';
 import { HORIZON_PROFILES, normalizeHorizon, renderMonitorHorizonSection, type Horizon } from '../horizon.js';
+import { takerFlowInFeed } from '../takerFlow.js';
 import { normalizeDirection, normalizeMandate, renderMonitorMandateSection, type Direction, type Mandate } from '../mandate.js';
 import { renderCalendarSection } from '../../data/macroCalendar.js';
 import {
@@ -198,6 +199,7 @@ export function buildLosingMonitorPrompt(input: LosingMonitorInput): string {
   const hasMetalsOptions = isMetals && input.equityOptions != null
   const hasListedOptions = hasEquityOptions || hasMetalsOptions
   const isHip3Listed = isEquity || isMetals
+  const flowInFeed = takerFlowInFeed()
   const equityOptionsBlock = renderEquityOptionsSection(input.equityOptions, {
     equity: isEquity,
     metals: isMetals,
@@ -351,10 +353,12 @@ ${sessionSection}${renderXyzSessionSection(getXyzSessionContext(input.asset))}${
 
 ${fundingSection}
 **DETAILED MARKET ANALYSIS** (for user transparency):
-- **Flow Dynamics**: Current flow ratio shows ${input.updatedData.flowRatio != null && Number.isFinite(input.updatedData.flowRatio) ? `${input.updatedData.flowRatio.toFixed(2)} (${input.updatedData.flowRatio > 1.2 ? 'BUY DOMINANT' : input.updatedData.flowRatio < 0.8 ? 'SELL DOMINANT' : 'BALANCED'})` : 'N/A (unavailable — not a balanced tape)'}
+${flowInFeed
+  ? `- **Flow Dynamics**: Current flow ratio shows ${input.updatedData.flowRatio != null && Number.isFinite(input.updatedData.flowRatio) ? `${input.updatedData.flowRatio.toFixed(2)} (${input.updatedData.flowRatio > 1.2 ? 'BUY DOMINANT' : input.updatedData.flowRatio < 0.8 ? 'SELL DOMINANT' : 'BALANCED'})` : 'N/A (unavailable — not a balanced tape)'}
 ${!isHip3Listed
-    ? `- **Flow Path (CVD, 24-bar)**: futures ${input.updatedData.cvdNet24Usd != null ? fmtUsd(input.updatedData.cvdNet24Usd) : 'N/A'}, spot ${input.updatedData.spotCvdNet24Usd != null ? fmtUsd(input.updatedData.spotCvdNet24Usd) : 'N/A'} | divergence: ${input.updatedData.cvdDivergence === 'bearish' ? 'BEARISH (buyers absorbed — upside fragile)' : input.updatedData.cvdDivergence === 'bullish' ? 'BULLISH (sellers absorbed — downside fragile)' : input.updatedData.cvdDivergence === 'none' ? 'none' : 'N/A'}\n`
-    : ''}
+    ? `- **Flow Path (CVD, 24-bar)**: futures ${input.updatedData.cvdNet24Usd != null ? fmtUsd(input.updatedData.cvdNet24Usd) : 'N/A'}, spot ${input.updatedData.spotCvdNet24Usd != null ? fmtUsd(input.updatedData.spotCvdNet24Usd) : 'N/A'} | divergence: ${input.updatedData.cvdDivergence === 'bearish' ? 'BEARISH (buyers absorbed — upside fragile)' : input.updatedData.cvdDivergence === 'bullish' ? 'BULLISH (sellers absorbed — downside fragile)' : input.updatedData.cvdDivergence === 'none' ? 'none' : 'N/A'}`
+    : ''}`
+  : ''}
 ${isHip3Listed
     ? ''
     : `- **Open Interest**: OI change of ${input.updatedData.oiDeltaPct ? input.updatedData.oiDeltaPct.toFixed(2) : 'N/A'}% (${input.updatedData.oiDeltaPct && input.updatedData.oiDeltaPct > 1 ? 'STRONG BUILDUP' : input.updatedData.oiDeltaPct && input.updatedData.oiDeltaPct < -1 ? 'LIQUIDATION WAVE' : 'STABLE'})\n`}
@@ -428,39 +432,55 @@ If NO → CUT_LOSS (thesis invalidated, get out now)
 - Only FLIP when trendConsistency ≥ 60% and volatility ≠ LOW. Otherwise, reassess after volatility expansion.
 
 ${isHip3Listed
-    ? `**CUT** (Immediate cut, flip allowed) if **2/2** cut triggers OR listed-options / stored invalidation fires:
+    ? flowInFeed
+      ? `**CUT** (Immediate cut, flip allowed) if **2/2** cut triggers OR listed-options / stored invalidation fires:
 1. 🔴 **Premium Flip**: Premium flips through 0 opposite your side OR pushes further ≥ 10 bps against you
 2. 🔴 **Opposite Flow Dominance**: (sell$ / buy$ ≥ 1.6 for longs; inverse for shorts). Flow Ratio N/A is NOT dominance.
 - Also CUT if EQUITY/METALS OPTIONS clearly reverse the open thesis (e.g. skew flips against you) or a stored invalidation criterion fires.
 - Set \`cutTriggers.oiAgainst\` = **false** always for HIP-3 (worker ignores venue OI — do not discuss OI in reason).`
-    : `**CUT** (Immediate cut, flip allowed) if 2/3:
+      : `**CUT** (Immediate cut, flip allowed) if premium flips against you OR listed-options / stored invalidation fires:
+1. 🔴 **Premium Flip**: Premium flips through 0 opposite your side OR pushes further ≥ 10 bps against you
+- Also CUT if EQUITY/METALS OPTIONS clearly reverse the open thesis (e.g. skew flips against you) or a stored invalidation criterion fires.
+- Set \`cutTriggers.oiAgainst\` = **false** and \`cutTriggers.oppositeFlow\` = **false**.`
+    : flowInFeed
+      ? `**CUT** (Immediate cut, flip allowed) if 2/3:
 1. 🔴 **OI Against**: OI moves against your side by ≥ 1% over last 2 bars
 2. 🔴 **Premium Flip**: Premium flips through 0 opposite your side OR pushes further ≥ 10 bps against you
-3. 🔴 **Opposite Flow Dominance**: (sell$ / buy$ ≥ 1.6 for longs; inverse for shorts). Flow Ratio N/A is NOT dominance — set oppositeFlow false and metrics.flowSameSide true when taker flow is missing.`}
+3. 🔴 **Opposite Flow Dominance**: (sell$ / buy$ ≥ 1.6 for longs; inverse for shorts). Flow Ratio N/A is NOT dominance — set oppositeFlow false and metrics.flowSameSide true when taker flow is missing.`
+      : `**CUT** (Immediate cut, flip allowed) if both fire:
+1. 🔴 **OI Against**: OI moves against your side by ≥ 1% over last 2 bars
+2. 🔴 **Premium Flip**: Premium flips through 0 opposite your side OR pushes further ≥ 10 bps against you
+- Set \`cutTriggers.oppositeFlow\` = **false** and \`metrics.flowSameSide\` = **true**.`}
 
 **TRIM** (Reduce 33-50%, keep probe) if:
-- ⚠️ ${isHip3Listed ? '1/2 cut triggers (premium/flow)' : '1/3 cut triggers'} met (thesis WEAKENING but not fully invalidated yet)
+- ⚠️ ${isHip3Listed ? (flowInFeed ? '1/2 cut triggers (premium/flow)' : 'premium flipped against you') : flowInFeed ? '1/3 cut triggers' : '1 of the 2 cut triggers'} met (thesis WEAKENING but not fully invalidated yet)
 - ⚠️ Loss > ${(2 * hm) % 1 === 0 ? 2 * hm : (2 * hm).toFixed(1)}% but no hard invalidation signals (protect capital, keep optionality)
 - ⚠️ Mixed signals: some data supports thesis, some contradicts it
 - ⚠️ **MATERIAL FUNDING DRAG** deepening the hole (paid ≥ max($2, 15% of |unrealized|) AND rate against you) — soft only; never cut solely for funding
-**FLIP** (if ${isHip3Listed ? 'both cut triggers' : '3/3'} + strong reversal):
+**FLIP** (if ${isHip3Listed ? (flowInFeed ? 'both cut triggers' : 'premium flip') : flowInFeed ? '3/3' : 'both cut triggers'} + strong reversal):
 ${isHip3Listed
-    ? '- 🔄 Opposite flow dominance (≥ 1.6×) AND premium flipped against the old side AND listed options now favor the flip side'
-    : optionsInScope
-      ? '- 🔄 Opposite flow dominance (≥ 1.6×) AND OI ↑ ≥ 1% AND dvol_close > dvol_open (breakout-style vol expansion)'
-      : '- 🔄 Opposite flow dominance (≥ 1.6×) AND OI ↑ ≥ 1% AND premium flipped against the old side (dvol skipped — BTC/ETH only)'}
+    ? flowInFeed
+      ? '- 🔄 Opposite flow dominance (≥ 1.6×) AND premium flipped against the old side AND listed options now favor the flip side'
+      : '- 🔄 Premium flipped against the old side AND listed options now favor the flip side'
+    : !flowInFeed
+      ? optionsInScope
+        ? '- 🔄 OI ↑ ≥ 1% AND dvol_close > dvol_open (breakout-style vol expansion) AND premium flipped against the old side'
+        : '- 🔄 OI ↑ ≥ 1% AND premium flipped against the old side (dvol skipped — BTC/ETH only)'
+      : optionsInScope
+        ? '- 🔄 Opposite flow dominance (≥ 1.6×) AND OI ↑ ≥ 1% AND dvol_close > dvol_open (breakout-style vol expansion)'
+        : '- 🔄 Opposite flow dominance (≥ 1.6×) AND OI ↑ ≥ 1% AND premium flipped against the old side (dvol skipped — BTC/ETH only)'}
 - This is a rare move: thesis fully reversed, new setup emerges
 
 **DCA** (average down — NOT the same as winning-monitor ADD) only if ALL hard gates hold AND ≥2/4 soft checklist:
 Hard gates (ALL required — worker will reject if missed):
 1. ✅ thesis_status = **INTACT** (original open thesis still valid; loss is timing/chop)
-2. ✅ **0/${isHip3Listed ? '2' : '3'}** cut triggers (${isHip3Listed ? 'premiumFlip, oppositeFlow all false; oiAgainst always false' : 'oiAgainst, premiumFlip, oppositeFlow all false'})
+2. ✅ **0/${isHip3Listed ? (flowInFeed ? '2' : '1') : flowInFeed ? '3' : '2'}** cut triggers (${isHip3Listed ? (flowInFeed ? 'premiumFlip, oppositeFlow all false; oiAgainst always false' : 'premiumFlip false; oiAgainst and oppositeFlow always false') : flowInFeed ? 'oiAgainst, premiumFlip, oppositeFlow all false' : 'oiAgainst and premiumFlip false; oppositeFlow always false'})
 3. ✅ Chop context: chopRisk = **true** OR volatility = **LOW**
 4. ✅ Loss still has room: |price P&L%| < 50% of distance-to-stop (or < ${lossCapNoStop}% price loss if stop unknown)
 5. ✅ DCA count < 2 on this position
 Soft checklist (need ≥ **2/4** — cite which in reason):
 1. ✅ You would STILL enter this trade at this price with no position
-2. ✅ Flow still same side (not opposite dominance)
+2. ✅ ${flowInFeed ? 'Flow still same side (not opposite dominance)' : 'Loss is still inside the original thesis, not a new opposing setup'}
 3. ✅ Premium still same sign / not flipped against you
 4. ✅ ${isHip3Listed ? 'Listed options still support the original side (skew / put-call not flipped against you)' : 'OI not moving against (≥ flat or continues with thesis)'}
 - Size: dcaSize 0.15–0.33 of **opening** notional (default 0.25). Smaller than a winning ADD.

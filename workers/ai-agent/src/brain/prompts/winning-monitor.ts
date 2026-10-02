@@ -3,6 +3,7 @@ import { fmtUsd, renderEtfFlowsSection, type EtfFlowsContext } from '../../data/
 import { renderHlPositioningSection, type HlPositioningContext } from '../../data/hlPositioning.js';
 import { renderWhaleSection, type WhalePos } from '../../data/hlWhales.js';
 import { HORIZON_PROFILES, normalizeHorizon, renderMonitorHorizonSection, type Horizon } from '../horizon.js';
+import { takerFlowInFeed } from '../takerFlow.js';
 import { normalizeDirection, normalizeMandate, renderMonitorMandateSection, type Direction, type Mandate } from '../mandate.js';
 import { renderCalendarSection } from '../../data/macroCalendar.js';
 import {
@@ -184,6 +185,7 @@ export function buildWinningMonitorPrompt(input: WinningMonitorInput): string {
   const hasMetalsOptions = isMetals && input.equityOptions != null
   const hasListedOptions = hasEquityOptions || hasMetalsOptions
   const isHip3Listed = isEquity || isMetals
+  const flowInFeed = takerFlowInFeed()
   const equityOptionsBlock = renderEquityOptionsSection(input.equityOptions, {
     equity: isEquity,
     metals: isMetals,
@@ -321,10 +323,12 @@ ${sessionSection}${renderXyzSessionSection(getXyzSessionContext(input.asset))}${
 
 ${fundingSection}
 **DETAILED MARKET ANALYSIS** (for user transparency):
-- **Flow Dynamics**: Current flow ratio shows ${input.updatedData.flowRatio != null && Number.isFinite(input.updatedData.flowRatio) ? `${input.updatedData.flowRatio.toFixed(2)} (${input.updatedData.flowRatio > 1.2 ? 'BUY DOMINANT' : input.updatedData.flowRatio < 0.8 ? 'SELL DOMINANT' : 'BALANCED'})` : 'N/A (unavailable — not a balanced tape)'}
+${flowInFeed
+  ? `- **Flow Dynamics**: Current flow ratio shows ${input.updatedData.flowRatio != null && Number.isFinite(input.updatedData.flowRatio) ? `${input.updatedData.flowRatio.toFixed(2)} (${input.updatedData.flowRatio > 1.2 ? 'BUY DOMINANT' : input.updatedData.flowRatio < 0.8 ? 'SELL DOMINANT' : 'BALANCED'})` : 'N/A (unavailable — not a balanced tape)'}
 ${!isHip3Listed
-    ? `- **Flow Path (CVD, 24-bar)**: futures ${input.updatedData.cvdNet24Usd != null ? fmtUsd(input.updatedData.cvdNet24Usd) : 'N/A'}, spot ${input.updatedData.spotCvdNet24Usd != null ? fmtUsd(input.updatedData.spotCvdNet24Usd) : 'N/A'} | divergence: ${input.updatedData.cvdDivergence === 'bearish' ? 'BEARISH (buyers absorbed — upside fragile)' : input.updatedData.cvdDivergence === 'bullish' ? 'BULLISH (sellers absorbed — downside fragile)' : input.updatedData.cvdDivergence === 'none' ? 'none' : 'N/A'}\n`
-    : ''}
+    ? `- **Flow Path (CVD, 24-bar)**: futures ${input.updatedData.cvdNet24Usd != null ? fmtUsd(input.updatedData.cvdNet24Usd) : 'N/A'}, spot ${input.updatedData.spotCvdNet24Usd != null ? fmtUsd(input.updatedData.spotCvdNet24Usd) : 'N/A'} | divergence: ${input.updatedData.cvdDivergence === 'bearish' ? 'BEARISH (buyers absorbed — upside fragile)' : input.updatedData.cvdDivergence === 'bullish' ? 'BULLISH (sellers absorbed — downside fragile)' : input.updatedData.cvdDivergence === 'none' ? 'none' : 'N/A'}`
+    : ''}`
+  : ''}
 ${isHip3Listed
     ? ''
     : `- **Open Interest**: OI change of ${input.updatedData.oiDeltaPct ? input.updatedData.oiDeltaPct.toFixed(2) : 'N/A'}% (${input.updatedData.oiDeltaPct && input.updatedData.oiDeltaPct > 1 ? 'STRONG BUILDUP' : input.updatedData.oiDeltaPct && input.updatedData.oiDeltaPct < -1 ? 'LIQUIDATION WAVE' : 'STABLE'})\n`}
@@ -391,22 +395,24 @@ You're **in profit**. All four actions are first-class — do not treat this as 
 3. **TRIM**: Take partial profit (25-33%) when protection signals fire
 4. **EXIT**: Fully close and lock gains when hard exit signals fire
 
-When you HOLD, say briefly whether ADD was close/met/not-met (users need to see that pyramiding was considered). Prefer ADD over idle HOLD when ≥3/4 ADD conditions fire and chop defense allows it.
+When you HOLD, say briefly whether ADD was close/met/not-met (users need to see that pyramiding was considered). Prefer ADD over idle HOLD when ≥${flowInFeed ? '3/4' : '2/3'} ADD conditions fire and chop defense allows it.
 
 **DECISION FRAMEWORK** (Winning Monitor Rules - PnL > 0):
 
 **CHOP DEFENSE**:
 - If volatility = **LOW** or chopRisk = **true**, default to HOLD unless ≥ 2 hard signals fire.
-- Only ADD when trendConsistency ≥ 70% **and** ${isHip3Listed ? 'listed options + premium/flow confirm the trend (venue OI ignored)' : 'flow/OI/premium all confirm the trend'}.
+- Only ADD when trendConsistency ≥ 70% **and** ${isHip3Listed ? 'listed options and the daily stack confirm the trend (venue OI ignored)' : flowInFeed ? 'flow/OI/premium all confirm the trend' : 'OI and premium confirm the trend'}.
 - Prefer tightening stops / moving to breakeven instead of trimming in chop. Protect gains first.
 
-**ADD** (pyramid lightly, ≤ +0.5× **opening** notional — trims do not shrink the add base) if 3/4 fire:
+**ADD** (pyramid lightly, ≤ +0.5× **opening** notional — trims do not shrink the add base) if ${flowInFeed ? '3/4' : '2/3'} fire:
 1. ✅ Price makes higher high (long) / lower low (short)
 ${isHip3Listed
     ? '2. ✅ Listed options still support your side (skew / put-call not flipped against you)'
     : '2. ✅ OI continues ↑ ≥ 0.5% vs last add'}
 3. ✅ Premium drifts further in your favor by ≥ 5 bps
-4. ✅ ${isHip3Listed ? 'Venue flow still in favor (brief FR) — spot CVD not required on HIP-3' : 'Spot flow CONFIRMS (spot CVD net delta same sign as your side — real demand, not perp-only leverage)'}
+${flowInFeed
+  ? `4. ✅ ${isHip3Listed ? 'Venue flow still in favor (brief FR) — spot CVD not required on HIP-3' : 'Spot flow CONFIRMS (spot CVD net delta same sign as your side — real demand, not perp-only leverage)'}`
+  : ''}
 ${addTriggerText
     ? `- Also honor the entry **Add Trigger** when it is clearly satisfied (treat as strong support for ADD alongside the checklist).`
     : ''}
@@ -417,8 +423,10 @@ ${addTriggerText
 ${optionsInScope
     ? '3. ⚠️ dvol_close spikes above dvol_open by ≥ 3 vol pts'
     : hasListedOptions
-      ? '3. ⚠️ Listed options turn against you (skew / put-call flip) OR opposite venue flow intensifies (≥ 1.5×)'
-      : '3. ⚠️ Opposite flow intensifies (≥ 1.5× against you) — dvol skipped (BTC/ETH only)'}
+      ? '3. ⚠️ Listed options turn against you (skew / put-call flip)'
+      : flowInFeed
+        ? '3. ⚠️ Opposite flow intensifies (≥ 1.5× against you) — dvol skipped (BTC/ETH only)'
+        : '3. ⚠️ Premium has faded vs entry — dvol skipped (BTC/ETH only)'}
 4. ⚠️ ${hip3LiqRelevant ? 'Opposite-side venue liquidation cluster without reclaim (local HL fuel — soft only)' : isHip3Listed ? 'Skip venue-liq trim trigger on investor horizon' : 'Opposite-side liquidations cluster (2+ bars ≥ 85th pct) without reclaim of prior high/low'}
 ${isCryptoAsset(input.asset)
     ? `5. ⚠️ **EXTENSION / EUPHORIA (soft)**: EXTENSION block is stretched **and** (funding crowded on your side **or** thesis_status = WEAKENED). Do **not** trim solely on high RSI while thesis is INTACT and trend is still expanding.\n`
@@ -427,12 +435,11 @@ ${isCryptoAsset(input.asset)
 **EXIT** (hard exit signal) if:
 1. 🔴 **MAJOR PROFIT LOSS**: P&L dropped > ${pctT(3)} since last check (emergency exit!)
 2. 🔴 ${isHip3Listed ? 'Premium crosses 0 against you AND listed options flip against your side (venue OI ignored)' : 'Premium crosses 0 against you AND OI flips against direction (OI ↓ on long trend; OI ↑ on short trend)'}
-3. 🔴 Two bars in a row with opposite flow: (sell$ ≥ 1.5× buy$ for longs; inverse for shorts)
-⚠️ Funding is **never** a hard EXIT trigger by itself.
+${flowInFeed ? '3. 🔴 Two bars in a row with opposite flow: (sell$ ≥ 1.5× buy$ for longs; inverse for shorts)\n' : ''}⚠️ Funding is **never** a hard EXIT trigger by itself.
 
 **HOLD** (default) if:
-- ✅ Trend conditions persist: ${isHip3Listed ? 'options still support side, flow in favor, premium same sign' : 'OI ↑ with trend, flow in favor, premium same sign'}
-- ✅ ADD bar not met (< 3/4 add conditions, or chop defense blocks pyramiding)
+- ✅ Trend conditions persist: ${isHip3Listed ? 'options still support side, premium same sign' : flowInFeed ? 'OI ↑ with trend, flow in favor, premium same sign' : 'OI ↑ with trend, premium same sign'}
+- ✅ ADD bar not met (< ${flowInFeed ? '3/4' : '2/3'} add conditions, or chop defense blocks pyramiding)
 - ✅ No trim/exit signals are present (< 2/4 trim triggers)
 - ✅ Already trimmed three times (can't trim again, only hold, add or exit)
 
@@ -444,7 +451,7 @@ ${isCryptoAsset(input.asset)
 **EXAMPLES** (thresholds already horizon-scaled):
 - **Scenario 1**: P&L was +${(4.6 * hm).toFixed(1)}% → now +${(1.3 * hm).toFixed(1)}% (dropped beyond the ${pctT(1.5)} trim trigger) = **TRIM 25-33%** (protect gains!)
 - **Scenario 2**: P&L was +${(2.0 * hm).toFixed(1)}% → now ${(-0.5 * hm).toFixed(1)}% (dropped beyond the ${pctT(3)} exit trigger) = **EXIT** (emergency!)
-- **Scenario 3**: P&L was +${(1.0 * hm).toFixed(1)}% → now +${(2.5 * hm).toFixed(1)}%, ${isHip3Listed ? 'options still support side, ' : 'OI ↑, '}premium drifts +6bps, flow in favor = **ADD** (pyramid the winner)
+- **Scenario 3**: P&L was +${(1.0 * hm).toFixed(1)}% → now +${(2.5 * hm).toFixed(1)}%, ${isHip3Listed ? 'options still support side, ' : 'OI ↑, '}premium drifts +6bps${flowInFeed ? ', flow in favor' : ''} = **ADD** (pyramid the winner)
 - **Scenario 4**: P&L rising but only 1–2/4 ADD conditions and no trim/exit = **HOLD** (let it run; mention ADD not met)
 
 **GREED vs DISCIPLINE**:

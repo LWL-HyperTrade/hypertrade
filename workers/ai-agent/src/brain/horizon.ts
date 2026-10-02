@@ -11,6 +11,8 @@
  *              fast-path; wider geometry, EMA-heavy temperament, ≤3x opens
  */
 
+import { takerFlowInFeed } from './takerFlow.js';
+
 export type Horizon = 'scalper' | 'swing' | 'investor';
 
 export function normalizeHorizon(raw: unknown): Horizon {
@@ -142,7 +144,7 @@ export function renderOpeningHorizonSection(h: Horizon): string {
     return `
 
 **TRADING HORIZON: SWING** (days-scale — the user chose patient trend capture):
-- Your flow/OI/CVD windows are WIDENED (×4): "3-bar flow" here spans 12 hours. Judge structure, not the last candle.
+- Your ${takerFlowInFeed() ? 'flow/OI/CVD' : 'OI and premium'} windows are WIDENED (×4): "3-bar" here spans 12 hours. Judge structure, not the last candle.
 - Expected hold: 1–7 days. Opening looks every hour (catch structure/flow shifts), but only take setups worth holding through overnight chop — patience is in the geometry, not in ignoring fresh alpha.
 - Prefer entries WITH the multi-day structure (ETF flows, positioning, trend consistency); skip counter-trend scalps even when short-term flow tempts.
 - Stops are session-range LOOSE and targets ≥ 2R — do not propose tight scalp stops that normal daily range would clip.`;
@@ -150,7 +152,7 @@ export function renderOpeningHorizonSection(h: Horizon): string {
   return `
 
 **TRADING HORIZON: SCALPER** (hours-scale):
-- Expected hold: a few hours to a day. React to microstructure (flow, CVD, liq clusters); take profits into strength; do not marry positions.`;
+- Expected hold: a few hours to a day. React to ${takerFlowInFeed() ? 'microstructure (flow, CVD, liq clusters)' : 'open interest, premium, liquidations, and listed options when this contract has them'}; take profits into strength; do not marry positions.`;
 }
 
 /**
